@@ -82,7 +82,7 @@ pub fn system_audio() -> Result<()> {
         Ok(())
     } else if bundled() {
         Err(
-            "Ease Rec isn't allowed to hear system audio. Turn it on in System Settings → \
+            "Aube isn't allowed to hear system audio. Turn it on in System Settings → \
              Privacy & Security → Screen & System Audio Recording, under System Audio \
              Recording Only, then start a new recording."
                 .into(),

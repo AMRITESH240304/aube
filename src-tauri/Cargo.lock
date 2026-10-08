@@ -230,6 +230,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
+name = "aube"
+version = "0.1.0"
+dependencies = [
+ "block2",
+ "cpal",
+ "hound",
+ "serde",
+ "serde_json",
+ "sonora",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-opener",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4639,21 +4654,6 @@ dependencies = [
  "thiserror 2.0.21",
  "windows 0.61.3",
  "windows-core 0.61.2",
-]
-
-[[package]]
-name = "whipscribe-recorder"
-version = "0.1.0"
-dependencies = [
- "block2",
- "cpal",
- "hound",
- "serde",
- "serde_json",
- "sonora",
- "tauri",
- "tauri-build",
- "tauri-plugin-opener",
 ]
 
 [[package]]

@@ -36,7 +36,7 @@
   {/if}
   {#if recorder.silent}
     {@render notice(
-      "We can't hear your microphone. Check it isn't muted, and that Ease Rec is allowed in System Settings → Privacy & Security → Microphone.",
+      "We can't hear your microphone. Check it isn't muted, and that Aube is allowed in System Settings → Privacy & Security → Microphone.",
     )}
   {/if}
 

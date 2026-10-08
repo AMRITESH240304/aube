@@ -1,4 +1,4 @@
-// Transcribes one audio stream for Ease Rec with Apple's on-device SpeechAnalyzer.
+// Transcribes one audio stream for Aube with Apple's on-device SpeechAnalyzer.
 // The app runs one of these per speaker, so the mic and the call are heard separately.
 //
 // stdin:  mono 32-bit float PCM at 48 kHz, until EOF.

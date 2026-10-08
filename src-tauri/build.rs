@@ -28,7 +28,7 @@ fn build_sidecar() {
         .args(["swiftc", "-O", "-swift-version", "5", "-target"])
         .arg(format!("{arch}-apple-macos26.0"))
         .args(["stt/main.swift", "-o"])
-        .arg(format!("binaries/ease-stt-{target}"))
+        .arg(format!("binaries/aube-stt-{target}"))
         .status()
         .expect("xcrun not found: install the Xcode command line tools");
     assert!(status.success(), "compiling stt/main.swift failed");

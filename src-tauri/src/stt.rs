@@ -1,5 +1,5 @@
 // Transcribes while recording with Apple's on-device SpeechAnalyzer, through the
-// `ease-stt` sidecar (stt/main.swift). Each speaker gets their own process: the
+// `aube-stt` sidecar (stt/main.swift). Each speaker gets their own process: the
 // mic is "You" and call audio is "Them", so neither can drown out the other.
 
 use std::{
@@ -96,7 +96,7 @@ struct Stream {
 fn spawn(live: &Arc<Live>, speaker: &'static str) -> Result<Stream> {
     let sidecar = std::env::current_exe()
         .map_err(err)?
-        .with_file_name("ease-stt");
+        .with_file_name("aube-stt");
     let mut child = Command::new(sidecar)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
