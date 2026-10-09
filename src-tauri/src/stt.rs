@@ -11,7 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tauri::{AppHandle, Emitter};
 
@@ -93,11 +93,17 @@ struct Stream {
     threads: [JoinHandle<()>; 2],
 }
 
-fn spawn(live: &Arc<Live>, speaker: &'static str) -> Result<Stream> {
-    let sidecar = std::env::current_exe()
+fn sidecar() -> Result<Command> {
+    let path = std::env::current_exe()
         .map_err(err)?
         .with_file_name("aube-stt");
-    let mut child = Command::new(sidecar)
+    Ok(Command::new(path))
+}
+
+// Without a language, the sidecar uses the Mac's.
+fn spawn(live: &Arc<Live>, speaker: &'static str, language: Option<&str>) -> Result<Stream> {
+    let mut child = sidecar()?
+        .args(language)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
@@ -144,7 +150,12 @@ pub struct Transcriber {
 }
 
 impl Transcriber {
-    pub fn new(app: AppHandle, id: String, with_call: bool) -> Result<Self> {
+    pub fn new(
+        app: AppHandle,
+        id: String,
+        with_call: bool,
+        language: Option<String>,
+    ) -> Result<Self> {
         let live = Arc::new(Live {
             app,
             id,
@@ -158,7 +169,7 @@ impl Transcriber {
         };
         let streams = speakers
             .iter()
-            .map(|speaker| spawn(&live, speaker))
+            .map(|speaker| spawn(&live, speaker, language.as_deref()))
             .collect::<Result<_>>()?;
         Ok(Self {
             live,
@@ -227,5 +238,29 @@ impl Transcriber {
         });
         let bytes = serde_json::to_vec_pretty(&transcript).map_err(err)?;
         std::fs::write(transcript_path(dir, &self.live.id), bytes).map_err(err)
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct Language {
+    id: String,
+    name: String,
+    installed: bool,
+}
+
+// Both run off the main thread: downloading a language takes a while.
+#[tauri::command(async)]
+pub fn transcription_languages() -> Result<Vec<Language>> {
+    let output = sidecar()?.arg("--languages").output().map_err(err)?;
+    serde_json::from_slice(&output.stdout).map_err(err)
+}
+
+#[tauri::command(async)]
+pub fn install_language(id: String) -> Result<()> {
+    let output = sidecar()?.args(["--install", &id]).output().map_err(err)?;
+    match serde_json::from_slice(&output.stdout) {
+        _ if output.status.success() => Ok(()),
+        Ok(Event::Error { error }) => Err(error),
+        _ => Err(format!("Couldn't download {id}.")),
     }
 }

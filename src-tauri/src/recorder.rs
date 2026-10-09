@@ -226,6 +226,7 @@ fn record(
     app: AppHandle,
     dir: PathBuf,
     id: String,
+    language: Option<String>,
     shared: Arc<Shared>,
     ready: mpsc::Sender<Result<Option<String>>>,
 ) -> Result<()> {
@@ -257,7 +258,7 @@ fn record(
     };
 
     // Recording goes on without a transcript if transcription can't start.
-    let mut transcriber = Transcriber::new(app, id, system_rate.is_some())
+    let mut transcriber = Transcriber::new(app, id, system_rate.is_some(), language)
         .map_err(|e| *shared.transcription_error.lock().unwrap() = Some(e))
         .ok();
     let mut mixer = Mixer::new(mic_rate, system_rate);
@@ -354,7 +355,12 @@ pub fn finish(recorder: &Recorder) -> Result<String> {
 }
 
 #[tauri::command]
-pub fn start_recording(app: AppHandle, state: State<'_, Recorder>, title: String) -> Result<()> {
+pub fn start_recording(
+    app: AppHandle,
+    state: State<'_, Recorder>,
+    title: String,
+    language: Option<String>,
+) -> Result<()> {
     let mut slot = state.session.lock().unwrap();
     if slot.is_some() {
         return Err("Already recording.".into());
@@ -370,8 +376,16 @@ pub fn start_recording(app: AppHandle, state: State<'_, Recorder>, title: String
     let (ready_tx, ready_rx) = mpsc::channel();
 
     let (thread_dir, thread_id, thread_shared) = (dir.clone(), id.clone(), shared.clone());
-    let thread =
-        std::thread::spawn(move || record(app, thread_dir, thread_id, thread_shared, ready_tx));
+    let thread = std::thread::spawn(move || {
+        record(
+            app,
+            thread_dir,
+            thread_id,
+            language,
+            thread_shared,
+            ready_tx,
+        )
+    });
     let system_error = ready_rx
         .recv()
         .map_err(|_| "The recorder stopped unexpectedly.".to_string())??;

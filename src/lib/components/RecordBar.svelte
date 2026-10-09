@@ -1,5 +1,6 @@
 <script lang="ts">
   import { formatDuration, recorder } from "$lib/recorder.svelte";
+  import LanguagePicker from "./LanguagePicker.svelte";
 
   let { onSaved }: { onSaved: (id: string) => void } = $props();
 
@@ -72,12 +73,16 @@
         {recorder.saving ? "Saving…" : "Stop"}
       </button>
     {:else}
+      {#if recorder.languages.length}
+        <LanguagePicker />
+      {/if}
       <button
-        class="flex items-center gap-2 rounded-full bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 dark:bg-white dark:text-zinc-900 dark:hover:bg-zinc-200"
+        class="flex items-center gap-2 rounded-full bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:opacity-60 dark:bg-white dark:text-zinc-900 dark:hover:bg-zinc-200"
+        disabled={recorder.installing}
         onclick={() => recorder.start()}
       >
         <span class="size-2.5 rounded-full bg-red-500" aria-hidden="true"></span>
-        Start recording
+        {recorder.installing ? "Downloading…" : "Start recording"}
       </button>
     {/if}
   </div>

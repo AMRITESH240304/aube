@@ -23,9 +23,19 @@ export type Recording = {
 };
 
 export type LiveTurn = { index: number; speaker: string; start: number; text: string };
+export type Language = { id: string; name: string; installed: boolean };
 type LiveText = LiveTurn & { recordingId: string };
 
 const SILENCE_HINT_SECS = 5;
+const LANGUAGE_KEY = "aube.language";
+
+function storedLanguage() {
+  try {
+    return localStorage.getItem(LANGUAGE_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
 
 class Recorder {
   status = $state<Status | null>(null);
@@ -34,6 +44,10 @@ class Recorder {
   error = $state("");
   heardSound = $state(false);
   saving = $state(false);
+  // Transcription language; empty means the Mac's own.
+  languages = $state<Language[]>([]);
+  language = $state(storedLanguage());
+  installing = $state(false);
   // Rough preview while recording; each turn's newer text replaces its older guess.
   live = $state<LiveTurn[]>([]);
 
@@ -51,6 +65,7 @@ class Recorder {
       const others = this.live.filter((t) => t.index !== turn.index);
       this.live = (turn.text ? [...others, turn] : others).sort((a, b) => a.start - b.start);
     });
+    this.#loadLanguages();
     await this.refresh();
     this.status = await invoke<Status | null>("recording_status");
     if (this.status) this.#startPolling();
@@ -61,10 +76,40 @@ class Recorder {
     this.loaded = true;
   }
 
+  async #loadLanguages() {
+    this.languages = await invoke<Language[]>("transcription_languages").catch(() => []);
+    // The list has one entry per language, so an earlier regional pick maps onto it.
+    const base = (id: string) => id.split("-")[0];
+    const listed = this.languages.find((l) => base(l.id) === base(this.language));
+    if (this.language && listed && listed.id !== this.language) this.#remember(listed.id);
+  }
+
+  #remember(id: string) {
+    this.language = id;
+    try {
+      localStorage.setItem(LANGUAGE_KEY, id);
+    } catch {}
+  }
+
+  // A language's model downloads once, when picked, so recording starts ready.
+  async setLanguage(id: string) {
+    this.#remember(id);
+    if (!id || this.languages.find((l) => l.id === id)?.installed) return;
+    this.error = "";
+    this.installing = true;
+    try {
+      await invoke("install_language", { id });
+      await this.#loadLanguages();
+    } catch (e) {
+      this.error = String(e);
+    }
+    this.installing = false;
+  }
+
   async start(title = defaultTitle()) {
     this.error = "";
     try {
-      await invoke("start_recording", { title });
+      await invoke("start_recording", { title, language: this.language || null });
       this.heardSound = false;
       this.live = [];
       this.#startPolling();

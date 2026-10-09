@@ -1,8 +1,11 @@
 // Transcribes one audio stream for Aube with Apple's on-device SpeechAnalyzer.
 // The app runs one of these per speaker, so the mic and the call are heard separately.
 //
-// stdin:  mono 32-bit float PCM at 48 kHz, until EOF.
-// stdout: one JSON object per line: {"start", "end", "text", "final"} or {"error"}.
+// aube-stt [language]           transcribe, in the Mac's language unless one is given
+//   stdin:  mono 32-bit float PCM at 48 kHz, until EOF.
+//   stdout: one JSON object per line: {"start", "end", "text", "final"} or {"error"}.
+// aube-stt --languages          print [{"id", "name", "installed"}] as JSON
+// aube-stt --install language   download a language's model ahead of time
 
 import AVFoundation
 import Foundation
@@ -24,8 +27,35 @@ func seconds(_ time: CMTime) -> Double {
     time.seconds.isFinite ? time.seconds : 0
 }
 
-guard let locale = await SpeechTranscriber.supportedLocale(equivalentTo: .current) else {
-    fail("Transcription doesn't support your Mac's language yet.")
+let arguments = Array(CommandLine.arguments.dropFirst())
+
+if arguments.first == "--languages" {
+    // One entry per language, in the Mac's region if supported, else the
+    // language's home region. "mul" is the Indian model Hindi already uses.
+    let mine = Locale.current.region
+    var best: [String: Locale] = [:]
+    for locale in await SpeechTranscriber.supportedLocales {
+        guard let code = locale.language.languageCode?.identifier, code != "mul" else { continue }
+        let home = Locale(identifier: Locale.Language(identifier: code).maximalIdentifier).region
+        func rank(_ l: Locale) -> Int { l.region == mine ? 2 : l.region == home ? 1 : 0 }
+        if best[code].map({ rank(locale) > rank($0) }) ?? true {
+            best[code] = locale
+        }
+    }
+    let installed = Set(await SpeechTranscriber.installedLocales.map { $0.identifier(.bcp47) })
+    let languages = best
+        .map { code, locale in
+            let id = locale.identifier(.bcp47)
+            return ["id": id, "name": Locale.current.localizedString(forLanguageCode: code) ?? id, "installed": installed.contains(id)]
+        }
+        .sorted { ($0["name"] as! String) < ($1["name"] as! String) }
+    FileHandle.standardOutput.write(try! JSONSerialization.data(withJSONObject: languages))
+    exit(0)
+}
+
+let requested = arguments.first == "--install" ? arguments.dropFirst().first : arguments.first
+guard let locale = await SpeechTranscriber.supportedLocale(equivalentTo: requested.map(Locale.init) ?? .current) else {
+    fail("Transcription doesn't support \(requested.map { Locale.current.localizedString(forIdentifier: $0) ?? $0 } ?? "your Mac's language") yet.")
 }
 let transcriber = SpeechTranscriber(
     locale: locale,
@@ -40,6 +70,9 @@ do {
     }
 } catch {
     fail("Couldn't download the speech model: \(error.localizedDescription)")
+}
+if arguments.first == "--install" {
+    exit(0)
 }
 guard let analyzerFormat = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber]),
       let converter = AVAudioConverter(from: inputFormat, to: analyzerFormat)
@@ -99,7 +132,9 @@ do {
     if let end = try await analyzer.analyzeSequence(inputs) {
         try await analyzer.finalizeAndFinish(through: end)
     } else {
+        // No audio at all: the results never end on their own, so stop here.
         await analyzer.cancelAndFinishNow()
+        exit(0)
     }
     try await results.value
 } catch {
