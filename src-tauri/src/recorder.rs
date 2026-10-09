@@ -47,7 +47,6 @@ struct Session {
     id: String,
     title: String,
     dir: PathBuf,
-    system_error: Option<String>,
     shared: Arc<Shared>,
     thread: JoinHandle<Result<()>>,
 }
@@ -58,6 +57,7 @@ struct Shared {
     paused: AtomicBool,
     frames: AtomicU64,
     peaks: [AtomicU32; 2],
+    system_error: Mutex<Option<String>>,
     transcription_error: Mutex<Option<String>>,
 }
 
@@ -211,6 +211,61 @@ fn open_system_audio(
     open_stream(&device, config, Source::System, tx, shared)
 }
 
+const OUTPUT_CHECK: Duration = Duration::from_secs(1);
+
+struct SystemAudio {
+    stream: Option<cpal::Stream>,
+    device: Option<cpal::DeviceId>,
+    checked: Instant,
+}
+
+impl SystemAudio {
+    fn open(host: &cpal::Host, tx: &Chunks, shared: &Arc<Shared>, mixer: &mut Mixer) -> Self {
+        let mut system = Self {
+            stream: None,
+            device: None,
+            checked: Instant::now(),
+        };
+        system.reopen(host, tx, shared, mixer);
+        system
+    }
+
+    fn follow_default_output(
+        &mut self,
+        host: &cpal::Host,
+        tx: &Chunks,
+        shared: &Arc<Shared>,
+        mixer: &mut Mixer,
+    ) {
+        if self.checked.elapsed() < OUTPUT_CHECK {
+            return;
+        }
+        self.checked = Instant::now();
+        if default_output_id(host) != self.device {
+            self.reopen(host, tx, shared, mixer);
+        }
+    }
+
+    fn reopen(&mut self, host: &cpal::Host, tx: &Chunks, shared: &Arc<Shared>, mixer: &mut Mixer) {
+        self.stream = None;
+        self.device = default_output_id(host);
+        let error = match open_system_audio(host, tx.clone(), shared) {
+            Ok((stream, rate)) => {
+                mixer.set_system_rate(rate);
+                self.stream = Some(stream);
+                None
+            }
+            Err(e) => Some(e),
+        };
+        *shared.system_error.lock().unwrap() = error;
+    }
+}
+
+fn default_output_id(host: &cpal::Host) -> Option<cpal::DeviceId> {
+    host.default_output_device()
+        .and_then(|device| device.id().ok())
+}
+
 fn write_samples(writer: &mut Wav, shared: &Shared, frames: &[[f32; 2]]) -> Result<()> {
     for &frame in frames {
         writer.write_sample(mixer::mix(frame)).map_err(err)?;
@@ -221,49 +276,40 @@ fn write_samples(writer: &mut Wav, shared: &Shared, frames: &[[f32; 2]]) -> Resu
 
 // Owns the audio streams (not Send on every platform) and the file writer.
 // Flushing every second keeps the file on disk if the process is killed.
-// Sends back why system audio is unavailable, if it is; the mic alone is enough to record.
 fn record(
     app: AppHandle,
     dir: PathBuf,
     id: String,
     language: Option<String>,
     shared: Arc<Shared>,
-    ready: mpsc::Sender<Result<Option<String>>>,
+    ready: mpsc::Sender<Result<()>>,
 ) -> Result<()> {
     let path = dir.join(format!("{id}.{PARTIAL}"));
     let host = cpal::default_host();
     let (tx, rx) = mpsc::channel();
     let setup = || -> Result<_> {
         let mic = open_microphone(&host, tx.clone(), &shared)?;
-        let system = open_system_audio(&host, tx, &shared);
         let writer = hound::WavWriter::create(&path, WAV_SPEC).map_err(err)?;
-        Ok((mic, system, writer))
+        Ok((mic, writer))
     };
-    let ((mic, mic_rate), system, mut writer) = match setup() {
+    let ((mic, mic_rate), mut writer) = match setup() {
         Ok(opened) => opened,
         Err(e) => {
             let _ = ready.send(Err(e.clone()));
             return Err(e);
         }
     };
-    let (system, system_rate) = match system {
-        Ok((stream, rate)) => {
-            let _ = ready.send(Ok(None));
-            (Some(stream), Some(rate))
-        }
-        Err(e) => {
-            let _ = ready.send(Ok(Some(e)));
-            (None, None)
-        }
-    };
+    let mut mixer = Mixer::new(mic_rate, None);
+    let mut system = SystemAudio::open(&host, &tx, &shared, &mut mixer);
+    let _ = ready.send(Ok(()));
 
     // Recording goes on without a transcript if transcription can't start.
-    let mut transcriber = Transcriber::new(app, id, system_rate.is_some(), language)
+    let mut transcriber = Transcriber::new(app, id, language)
         .map_err(|e| *shared.transcription_error.lock().unwrap() = Some(e))
         .ok();
-    let mut mixer = Mixer::new(mic_rate, system_rate);
     let mut last_flush = Instant::now();
     while !shared.stop.load(Relaxed) {
+        system.follow_default_output(&host, &tx, &shared, &mut mixer);
         let received = rx.recv_timeout(Duration::from_millis(100)).into_iter();
         for chunk in received.chain(rx.try_iter()) {
             mixer.push(chunk);
@@ -282,7 +328,7 @@ fn record(
         }
     }
 
-    drop((mic, system));
+    drop((mic, system, tx));
     for chunk in rx.try_iter() {
         mixer.push(chunk);
     }
@@ -386,7 +432,7 @@ pub fn start_recording(
             ready_tx,
         )
     });
-    let system_error = ready_rx
+    ready_rx
         .recv()
         .map_err(|_| "The recorder stopped unexpectedly.".to_string())??;
 
@@ -403,7 +449,6 @@ pub fn start_recording(
         id,
         title,
         dir,
-        system_error,
         shared,
         thread,
     });
@@ -433,7 +478,7 @@ pub fn recording_status(state: State<'_, Recorder>) -> Option<Status> {
         paused: s.shared.paused.load(Relaxed),
         mic_level: s.shared.take_level(Source::Mic),
         system_level: s.shared.take_level(Source::System),
-        system_error: s.system_error.clone(),
+        system_error: s.shared.system_error.lock().unwrap().clone(),
         transcription_error: s.shared.transcription_error.lock().unwrap().clone(),
     })
 }

@@ -25,15 +25,17 @@ export type Recording = {
 export type LiveTurn = { index: number; speaker: string; start: number; text: string };
 export type Language = { id: string; name: string; installed: boolean };
 type LiveText = LiveTurn & { recordingId: string };
+type LiveLanguage = { recordingId: string; speaker: string; language: string | null };
 
 const SILENCE_HINT_SECS = 5;
 const LANGUAGE_KEY = "aube.language";
+export const AUTO_LANGUAGE = "auto";
 
 function storedLanguage() {
   try {
-    return localStorage.getItem(LANGUAGE_KEY) ?? "";
+    return localStorage.getItem(LANGUAGE_KEY) ?? AUTO_LANGUAGE;
   } catch {
-    return "";
+    return AUTO_LANGUAGE;
   }
 }
 
@@ -48,6 +50,7 @@ class Recorder {
   languages = $state<Language[]>([]);
   language = $state(storedLanguage());
   installing = $state(false);
+  detected = $state<Record<string, string | null>>({});
   // Rough preview while recording; each turn's newer text replaces its older guess.
   live = $state<LiveTurn[]>([]);
 
@@ -64,6 +67,10 @@ class Recorder {
       if (recordingId !== this.status?.id) return;
       const others = this.live.filter((t) => t.index !== turn.index);
       this.live = (turn.text ? [...others, turn] : others).sort((a, b) => a.start - b.start);
+    });
+    listen<LiveLanguage>("live-language", ({ payload: { recordingId, speaker, language } }) => {
+      if (recordingId !== this.status?.id) return;
+      this.detected = { ...this.detected, [speaker]: language };
     });
     this.#loadLanguages();
     await this.refresh();
@@ -94,7 +101,7 @@ class Recorder {
   // A language's model downloads once, when picked, so recording starts ready.
   async setLanguage(id: string) {
     this.#remember(id);
-    if (!id || this.languages.find((l) => l.id === id)?.installed) return;
+    if (!id || id === AUTO_LANGUAGE || this.languages.find((l) => l.id === id)?.installed) return;
     this.error = "";
     this.installing = true;
     try {
@@ -112,6 +119,7 @@ class Recorder {
       await invoke("start_recording", { title, language: this.language || null });
       this.heardSound = false;
       this.live = [];
+      this.detected = {};
       this.#startPolling();
     } catch (e) {
       this.error = String(e);

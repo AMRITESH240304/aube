@@ -1,13 +1,17 @@
 <script lang="ts">
   import { tick } from "svelte";
-  import { recorder } from "$lib/recorder.svelte";
+  import { AUTO_LANGUAGE, recorder } from "$lib/recorder.svelte";
 
   let open = $state(false);
   let query = $state("");
   let root = $state<HTMLElement>();
   let search = $state<HTMLInputElement>();
 
-  const current = $derived(recorder.languages.find((l) => l.id === recorder.language));
+  const label = $derived(
+    recorder.language === AUTO_LANGUAGE
+      ? "Auto-detect"
+      : (recorder.languages.find((l) => l.id === recorder.language)?.name ?? "Mac's language"),
+  );
   const matches = $derived(
     recorder.languages.filter((l) => l.name.toLowerCase().includes(query.trim().toLowerCase())),
   );
@@ -59,11 +63,11 @@
     class="flex items-center gap-1.5 rounded-full py-2 pr-2.5 pl-3 text-sm hover:bg-zinc-100 focus-visible:outline-2 focus-visible:outline-blue-600 disabled:opacity-50 dark:hover:bg-zinc-800"
     aria-haspopup="true"
     aria-expanded={open}
-    aria-label={`Transcription language: ${current?.name ?? "Mac's language"}`}
+    aria-label={`Transcription language: ${label}`}
     disabled={recorder.installing}
     onclick={toggle}
   >
-    {current?.name ?? "Mac's language"}
+    {label}
     <svg viewBox="0 0 16 16" class="size-3 fill-current opacity-60" aria-hidden="true"><path d="M4 6l4 4 4-4z" /></svg>
   </button>
 
@@ -82,6 +86,7 @@
       />
       <ul class="max-h-64 overflow-y-auto p-1" aria-label="Languages">
         {#if !query.trim()}
+          {@render item(AUTO_LANGUAGE, "Auto-detect", true)}
           {@render item("", "Mac's language", true)}
         {/if}
         {#each matches as language (language.id)}

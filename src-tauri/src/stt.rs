@@ -15,10 +15,16 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tauri::{AppHandle, Emitter};
 
-use crate::{echo::Echo, err, transcripts::transcript_path, Result};
+use crate::{echo::Echo, err, lid, mixer::OUTPUT_RATE, transcripts::transcript_path, Result};
 
 // Frames arrive as [mic, call], matching this order.
 const SPEAKERS: [&str; 2] = ["You", "Them"];
+
+const AUTO: &str = "auto";
+const SPEECH_TO_DETECT: usize = 8 * lid::RATE;
+const LONGEST_WAIT: usize = 30 * OUTPUT_RATE as usize;
+const LEAD_IN: usize = OUTPUT_RATE as usize;
+const QUIET: f32 = 0.02;
 
 #[derive(Deserialize)]
 #[serde(untagged)]
@@ -53,14 +59,25 @@ struct Live {
 
 impl Live {
     // `pending` is the speaker's phrase still being heard; a final result settles it.
-    fn handle(&self, speaker: &'static str, pending: &mut Option<usize>, event: Event) {
+    fn handle(
+        &self,
+        speaker: &'static str,
+        pending: &mut Option<usize>,
+        event: Event,
+        offset: f64,
+    ) {
         let (start, end, text, is_final) = match event {
             Event::Text {
                 start,
                 end,
                 text,
                 is_final,
-            } => (start, end, text.trim().to_string(), is_final),
+            } => (
+                start + offset,
+                end + offset,
+                text.trim().to_string(),
+                is_final,
+            ),
             Event::Error { error } => {
                 *self.error.lock().unwrap() = Some(error);
                 return;
@@ -85,6 +102,13 @@ impl Live {
             *pending = None;
         }
     }
+
+    fn detected(&self, speaker: &str, language: Option<&Language>) {
+        let _ = self.app.emit(
+            "live-language",
+            json!({ "recordingId": self.id, "speaker": speaker, "language": language.map(|l| &l.name) }),
+        );
+    }
 }
 
 struct Stream {
@@ -101,7 +125,12 @@ fn sidecar() -> Result<Command> {
 }
 
 // Without a language, the sidecar uses the Mac's.
-fn spawn(live: &Arc<Live>, speaker: &'static str, language: Option<&str>) -> Result<Stream> {
+fn spawn(
+    live: &Arc<Live>,
+    speaker: &'static str,
+    language: Option<&str>,
+    offset: f64,
+) -> Result<Stream> {
     let mut child = sidecar()?
         .args(language)
         .stdin(Stdio::piped())
@@ -131,7 +160,7 @@ fn spawn(live: &Arc<Live>, speaker: &'static str, language: Option<&str>) -> Res
             .map_while(std::io::Result::ok)
         {
             if let Ok(event) = serde_json::from_str(&line) {
-                live.handle(speaker, &mut pending, event);
+                live.handle(speaker, &mut pending, event, offset);
             }
         }
     });
@@ -142,39 +171,123 @@ fn spawn(live: &Arc<Live>, speaker: &'static str, language: Option<&str>) -> Res
     })
 }
 
+enum Feed {
+    Waiting {
+        held: Vec<f32>,
+        speech: Vec<f32>,
+        skipped: usize,
+    },
+    Streaming(Stream),
+    Off,
+}
+
+struct Speaker {
+    name: &'static str,
+    feed: Feed,
+}
+
+impl Speaker {
+    fn push(&mut self, audio: Vec<f32>, live: &Arc<Live>, languages: &[Language]) {
+        match &mut self.feed {
+            Feed::Streaming(stream) => {
+                let _ = stream.audio.send(audio);
+            }
+            Feed::Waiting {
+                held,
+                speech,
+                skipped,
+            } => {
+                if audio.iter().any(|s| s.abs() > QUIET) {
+                    speech.extend(lid::downsample(&audio, OUTPUT_RATE as usize));
+                }
+                held.extend(audio);
+                if speech.is_empty() && held.len() > LEAD_IN {
+                    let silence = held.len() - LEAD_IN;
+                    held.drain(..silence);
+                    *skipped += silence;
+                }
+                if speech.len() >= SPEECH_TO_DETECT || held.len() >= LONGEST_WAIT {
+                    self.begin(live, languages);
+                }
+            }
+            Feed::Off => {}
+        }
+    }
+
+    fn begin(&mut self, live: &Arc<Live>, languages: &[Language]) {
+        let Feed::Waiting {
+            held,
+            speech,
+            skipped,
+        } = std::mem::replace(&mut self.feed, Feed::Off)
+        else {
+            return;
+        };
+        let language = detect(&speech, languages);
+        live.detected(self.name, language);
+        let offset = skipped as f64 / OUTPUT_RATE as f64;
+        match spawn(live, self.name, language.map(|l| l.id.as_str()), offset) {
+            Ok(stream) => {
+                let _ = stream.audio.send(held);
+                self.feed = Feed::Streaming(stream);
+            }
+            Err(e) => *live.error.lock().unwrap() = Some(e),
+        }
+    }
+}
+
+fn detect<'a>(speech: &[f32], languages: &'a [Language]) -> Option<&'a Language> {
+    if speech.len() < lid::RATE {
+        return None;
+    }
+    let codes: Vec<&str> = languages.iter().map(Language::code).collect();
+    let code = lid::detector()?.detect(speech, &codes)?;
+    languages.iter().find(|l| l.code() == code)
+}
+
 pub struct Transcriber {
     live: Arc<Live>,
-    streams: Vec<Stream>,
-    // Only when there's a call to hear.
-    echo: Option<Echo>,
+    speakers: Vec<Speaker>,
+    languages: Vec<Language>,
+    echo: Echo,
 }
 
 impl Transcriber {
-    pub fn new(
-        app: AppHandle,
-        id: String,
-        with_call: bool,
-        language: Option<String>,
-    ) -> Result<Self> {
+    pub fn new(app: AppHandle, id: String, language: Option<String>) -> Result<Self> {
         let live = Arc::new(Live {
             app,
             id,
             turns: Mutex::default(),
             error: Mutex::default(),
         });
-        let speakers = if with_call {
-            &SPEAKERS[..]
+        let auto = language.as_deref() == Some(AUTO);
+        let languages = if auto {
+            thread::spawn(lid::detector);
+            languages().unwrap_or_default()
         } else {
-            &SPEAKERS[..1]
+            Vec::new()
         };
-        let streams = speakers
-            .iter()
-            .map(|speaker| spawn(&live, speaker, language.as_deref()))
+        let fixed = language.filter(|_| !auto);
+        let speakers = SPEAKERS
+            .into_iter()
+            .map(|name| {
+                let feed = if languages.is_empty() {
+                    Feed::Streaming(spawn(&live, name, fixed.as_deref(), 0.0)?)
+                } else {
+                    Feed::Waiting {
+                        held: Vec::new(),
+                        speech: Vec::new(),
+                        skipped: 0,
+                    }
+                };
+                Ok(Speaker { name, feed })
+            })
             .collect::<Result<_>>()?;
         Ok(Self {
             live,
-            streams,
-            echo: with_call.then(Echo::new),
+            speakers,
+            languages,
+            echo: Echo::new(),
         })
     }
 
@@ -182,13 +295,10 @@ impl Transcriber {
         if frames.is_empty() {
             return;
         }
-        let mic = match &mut self.echo {
-            Some(echo) => echo.cancel(frames),
-            None => frames.iter().map(|f| f[0]).collect(),
-        };
+        let mic = self.echo.cancel(frames);
         let call = frames.iter().map(|f| f[1]).collect();
-        for (stream, audio) in self.streams.iter().zip([mic, call]) {
-            let _ = stream.audio.send(audio);
+        for (speaker, audio) in self.speakers.iter_mut().zip([mic, call]) {
+            speaker.push(audio, &self.live, &self.languages);
         }
     }
 
@@ -197,11 +307,18 @@ impl Transcriber {
     }
 
     // Lets each sidecar finish what it heard, then saves `<id>.transcript.json`.
-    pub fn finish(self, dir: &Path) -> Result<()> {
+    pub fn finish(mut self, dir: &Path) -> Result<()> {
+        for speaker in &mut self.speakers {
+            if matches!(&speaker.feed, Feed::Waiting { speech, .. } if !speech.is_empty()) {
+                speaker.begin(&self.live, &self.languages);
+            }
+        }
         let mut children = Vec::new();
-        for stream in self.streams {
-            drop(stream.audio);
-            children.push((stream.child, stream.threads));
+        for speaker in self.speakers {
+            if let Feed::Streaming(stream) = speaker.feed {
+                drop(stream.audio);
+                children.push((stream.child, stream.threads));
+            }
         }
         let deadline = Instant::now() + Duration::from_secs(15);
         for (mut child, threads) in children {
@@ -248,11 +365,21 @@ pub struct Language {
     installed: bool,
 }
 
+impl Language {
+    fn code(&self) -> &str {
+        self.id.split('-').next().unwrap_or(&self.id)
+    }
+}
+
+fn languages() -> Result<Vec<Language>> {
+    let output = sidecar()?.arg("--languages").output().map_err(err)?;
+    serde_json::from_slice(&output.stdout).map_err(err)
+}
+
 // Both run off the main thread: downloading a language takes a while.
 #[tauri::command(async)]
 pub fn transcription_languages() -> Result<Vec<Language>> {
-    let output = sidecar()?.arg("--languages").output().map_err(err)?;
-    serde_json::from_slice(&output.stdout).map_err(err)
+    languages()
 }
 
 #[tauri::command(async)]

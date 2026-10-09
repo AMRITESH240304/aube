@@ -1,6 +1,7 @@
 use tauri::{Manager, RunEvent};
 
 mod echo;
+mod lid;
 mod mixer;
 #[cfg(target_os = "macos")]
 mod permission;
