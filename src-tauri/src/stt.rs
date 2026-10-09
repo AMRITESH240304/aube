@@ -3,17 +3,21 @@
 // mic is "You" and call audio is "Them", so neither can drown out the other.
 
 use std::{
+    collections::{HashMap, VecDeque},
     io::{BufRead, BufReader, Write},
-    path::Path,
+    path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::{mpsc, Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed},
+        mpsc, Arc, Mutex,
+    },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::{echo::Echo, err, lid, mixer::OUTPUT_RATE, transcripts::transcript_path, Result};
 
@@ -21,10 +25,11 @@ use crate::{echo::Echo, err, lid, mixer::OUTPUT_RATE, transcripts::transcript_pa
 const SPEAKERS: [&str; 2] = ["You", "Them"];
 
 const AUTO: &str = "auto";
-const SPEECH_TO_DETECT: usize = 8 * lid::RATE;
-const LONGEST_WAIT: usize = 30 * OUTPUT_RATE as usize;
-const LEAD_IN: usize = OUTPUT_RATE as usize;
+const CHECK_EVERY: usize = 4 * lid::RATE;
+const SPEECH_WINDOW: usize = 8 * lid::RATE;
+const REWIND: usize = 8 * OUTPUT_RATE as usize;
 const QUIET: f32 = 0.02;
+const GUESSES: &str = "detected-languages.json";
 
 #[derive(Deserialize)]
 #[serde(untagged)]
@@ -44,9 +49,17 @@ enum Event {
 #[derive(Default)]
 struct Turn {
     speaker: &'static str,
+    stream: usize,
     start: f64,
     end: f64,
     text: String,
+}
+
+struct Origin {
+    speaker: &'static str,
+    stream: usize,
+    offset: f64,
+    alive: Arc<AtomicBool>,
 }
 
 // Shared with each speaker's reader thread.
@@ -55,17 +68,14 @@ struct Live {
     id: String,
     turns: Mutex<Vec<Turn>>,
     error: Mutex<Option<String>>,
+    streams: AtomicUsize,
+    guesses: Mutex<HashMap<String, String>>,
+    guesses_path: Option<PathBuf>,
 }
 
 impl Live {
     // `pending` is the speaker's phrase still being heard; a final result settles it.
-    fn handle(
-        &self,
-        speaker: &'static str,
-        pending: &mut Option<usize>,
-        event: Event,
-        offset: f64,
-    ) {
+    fn handle(&self, origin: &Origin, pending: &mut Option<usize>, event: Event) {
         let (start, end, text, is_final) = match event {
             Event::Text {
                 start,
@@ -73,8 +83,8 @@ impl Live {
                 text,
                 is_final,
             } => (
-                start + offset,
-                end + offset,
+                start + origin.offset,
+                end + origin.offset,
                 text.trim().to_string(),
                 is_final,
             ),
@@ -84,16 +94,17 @@ impl Live {
             }
         };
         let mut turns = self.turns.lock().unwrap();
+        if !origin.alive.load(Relaxed) {
+            return;
+        }
         let index = *pending.get_or_insert_with(|| {
             turns.push(Turn::default());
             turns.len() - 1
         });
-        let _ = self.app.emit(
-            "live-text",
-            json!({ "recordingId": self.id, "index": index, "speaker": speaker, "start": start, "text": text }),
-        );
+        self.emit_text(index, origin.speaker, start, &text);
         turns[index] = Turn {
-            speaker,
+            speaker: origin.speaker,
+            stream: origin.stream,
             start,
             end,
             text,
@@ -103,18 +114,58 @@ impl Live {
         }
     }
 
-    fn detected(&self, speaker: &str, language: Option<&Language>) {
+    fn emit_text(&self, index: usize, speaker: &str, start: f64, text: &str) {
+        let _ = self.app.emit(
+            "live-text",
+            json!({ "recordingId": self.id, "index": index, "speaker": speaker, "start": start, "text": text }),
+        );
+    }
+
+    fn cut(&self, stream: usize, from: f64) {
+        let mut turns = self.turns.lock().unwrap();
+        for (index, turn) in turns.iter_mut().enumerate() {
+            if turn.stream == stream && turn.start >= from && !turn.text.is_empty() {
+                turn.text.clear();
+                self.emit_text(index, turn.speaker, turn.start, "");
+            }
+        }
+    }
+
+    fn detected(&self, speaker: &str, language: &Language) {
         let _ = self.app.emit(
             "live-language",
-            json!({ "recordingId": self.id, "speaker": speaker, "language": language.map(|l| &l.name) }),
+            json!({ "recordingId": self.id, "speaker": speaker, "language": language.name }),
         );
+    }
+
+    fn guess(&self, speaker: &str) -> Option<String> {
+        self.guesses.lock().unwrap().get(speaker).cloned()
+    }
+
+    fn remember(&self, speaker: &str, language: &Language) {
+        let mut guesses = self.guesses.lock().unwrap();
+        guesses.insert(speaker.to_owned(), language.id.clone());
+        if let (Some(path), Ok(bytes)) = (&self.guesses_path, serde_json::to_vec(&*guesses)) {
+            let _ = std::fs::write(path, bytes);
+        }
     }
 }
 
 struct Stream {
+    id: usize,
     audio: mpsc::Sender<Vec<f32>>,
     child: Child,
     threads: [JoinHandle<()>; 2],
+    alive: Arc<AtomicBool>,
+}
+
+impl Stream {
+    fn stop(mut self) {
+        self.alive.store(false, Relaxed);
+        drop(self.audio);
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
 }
 
 fn sidecar() -> Result<Command> {
@@ -152,6 +203,14 @@ fn spawn(
             }
         }
     });
+    let alive = Arc::new(AtomicBool::new(true));
+    let origin = Origin {
+        speaker,
+        stream: live.streams.fetch_add(1, Relaxed),
+        offset,
+        alive: alive.clone(),
+    };
+    let id = origin.stream;
     let live = live.clone();
     let reader = thread::spawn(move || {
         let mut pending = None;
@@ -160,80 +219,121 @@ fn spawn(
             .map_while(std::io::Result::ok)
         {
             if let Ok(event) = serde_json::from_str(&line) {
-                live.handle(speaker, &mut pending, event, offset);
+                live.handle(&origin, &mut pending, event);
             }
         }
     });
     Ok(Stream {
+        id,
         audio,
         child,
         threads: [writer, reader],
+        alive,
     })
 }
 
-enum Feed {
-    Waiting {
-        held: Vec<f32>,
-        speech: Vec<f32>,
-        skipped: usize,
-    },
-    Streaming(Stream),
-    Off,
+#[derive(Default)]
+struct Listening {
+    recent: VecDeque<f32>,
+    speech: VecDeque<f32>,
+    since_check: usize,
+    confirmed: bool,
+    candidate: Option<String>,
+}
+
+impl Listening {
+    fn hear(&mut self, audio: &[f32]) {
+        self.recent.extend(audio);
+        let excess = self.recent.len().saturating_sub(REWIND);
+        self.recent.drain(..excess);
+        if audio.iter().any(|s| s.abs() > QUIET) {
+            let before = self.speech.len();
+            self.speech
+                .extend(lid::downsample(audio, OUTPUT_RATE as usize));
+            self.since_check += self.speech.len() - before;
+            let excess = self.speech.len().saturating_sub(SPEECH_WINDOW);
+            self.speech.drain(..excess);
+        }
+    }
 }
 
 struct Speaker {
     name: &'static str,
-    feed: Feed,
+    stream: Option<Stream>,
+    language: Option<String>,
+    heard: usize,
+    listening: Option<Listening>,
 }
 
 impl Speaker {
     fn push(&mut self, audio: Vec<f32>, live: &Arc<Live>, languages: &[Language]) {
-        match &mut self.feed {
-            Feed::Streaming(stream) => {
-                let _ = stream.audio.send(audio);
-            }
-            Feed::Waiting {
-                held,
-                speech,
-                skipped,
-            } => {
-                if audio.iter().any(|s| s.abs() > QUIET) {
-                    speech.extend(lid::downsample(&audio, OUTPUT_RATE as usize));
-                }
-                held.extend(audio);
-                if speech.is_empty() && held.len() > LEAD_IN {
-                    let silence = held.len() - LEAD_IN;
-                    held.drain(..silence);
-                    *skipped += silence;
-                }
-                if speech.len() >= SPEECH_TO_DETECT || held.len() >= LONGEST_WAIT {
-                    self.begin(live, languages);
-                }
-            }
-            Feed::Off => {}
+        self.heard += audio.len();
+        let due = self.listening.as_mut().is_some_and(|listening| {
+            listening.hear(&audio);
+            listening.since_check >= CHECK_EVERY
+        });
+        if let Some(stream) = &self.stream {
+            let _ = stream.audio.send(audio);
+        }
+        if due {
+            self.check(live, languages);
         }
     }
 
-    fn begin(&mut self, live: &Arc<Live>, languages: &[Language]) {
-        let Feed::Waiting {
-            held,
-            speech,
-            skipped,
-        } = std::mem::replace(&mut self.feed, Feed::Off)
-        else {
+    fn check(&mut self, live: &Arc<Live>, languages: &[Language]) {
+        let Some(listening) = &mut self.listening else {
             return;
         };
-        let language = detect(&speech, languages);
+        listening.since_check = 0;
+        let found = detect(listening.speech.make_contiguous(), languages);
+        let Some(found) = found else {
+            listening.candidate = None;
+            return;
+        };
+        if covers(self.language.as_deref(), found) {
+            if !listening.confirmed {
+                live.detected(self.name, found);
+            }
+            listening.confirmed = true;
+            listening.candidate = None;
+            return;
+        }
+        if listening.confirmed && listening.candidate.as_deref() != Some(&found.id) {
+            listening.candidate = Some(found.id.clone());
+            return;
+        }
+        self.switch(live, found);
+    }
+
+    fn switch(&mut self, live: &Arc<Live>, language: &Language) {
+        let Some(listening) = &mut self.listening else {
+            return;
+        };
+        let rewind: Vec<f32> = listening.recent.iter().copied().collect();
+        let from = (self.heard - rewind.len()) as f64 / OUTPUT_RATE as f64;
+        listening.confirmed = true;
+        listening.candidate = None;
+        if let Some(old) = self.stream.take() {
+            let id = old.id;
+            old.stop();
+            live.cut(id, from);
+        }
         live.detected(self.name, language);
-        let offset = skipped as f64 / OUTPUT_RATE as f64;
-        match spawn(live, self.name, language.map(|l| l.id.as_str()), offset) {
+        live.remember(self.name, language);
+        self.language = Some(language.id.clone());
+        match spawn(live, self.name, Some(&language.id), from) {
             Ok(stream) => {
-                let _ = stream.audio.send(held);
-                self.feed = Feed::Streaming(stream);
+                let _ = stream.audio.send(rewind);
+                self.stream = Some(stream);
             }
             Err(e) => *live.error.lock().unwrap() = Some(e),
         }
     }
+}
+
+fn covers(current: Option<&str>, found: &Language) -> bool {
+    let current = current.map(|id| id.split('-').next().unwrap_or(id));
+    current == Some(found.code()) || (current == Some("hi") && found.code() == "en")
 }
 
 fn detect<'a>(speech: &[f32], languages: &'a [Language]) -> Option<&'a Language> {
@@ -245,6 +345,12 @@ fn detect<'a>(speech: &[f32], languages: &'a [Language]) -> Option<&'a Language>
     languages.iter().find(|l| l.code() == code)
 }
 
+fn saved_guesses(path: Option<&Path>) -> HashMap<String, String> {
+    path.and_then(|path| std::fs::read(path).ok())
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default()
+}
+
 pub struct Transcriber {
     live: Arc<Live>,
     speakers: Vec<Speaker>,
@@ -254,12 +360,6 @@ pub struct Transcriber {
 
 impl Transcriber {
     pub fn new(app: AppHandle, id: String, language: Option<String>) -> Result<Self> {
-        let live = Arc::new(Live {
-            app,
-            id,
-            turns: Mutex::default(),
-            error: Mutex::default(),
-        });
         let auto = language.as_deref() == Some(AUTO);
         let languages = if auto {
             thread::spawn(lid::detector);
@@ -267,20 +367,32 @@ impl Transcriber {
         } else {
             Vec::new()
         };
-        let fixed = language.filter(|_| !auto);
+        let listen = !languages.is_empty();
+        let guesses_path = app.path().app_data_dir().ok().map(|dir| dir.join(GUESSES));
+        let live = Arc::new(Live {
+            app,
+            id,
+            turns: Mutex::default(),
+            error: Mutex::default(),
+            streams: AtomicUsize::new(0),
+            guesses: Mutex::new(saved_guesses(guesses_path.as_deref())),
+            guesses_path,
+        });
         let speakers = SPEAKERS
             .into_iter()
             .map(|name| {
-                let feed = if languages.is_empty() {
-                    Feed::Streaming(spawn(&live, name, fixed.as_deref(), 0.0)?)
+                let language = if listen {
+                    live.guess(name)
                 } else {
-                    Feed::Waiting {
-                        held: Vec::new(),
-                        speech: Vec::new(),
-                        skipped: 0,
-                    }
+                    language.clone().filter(|_| !auto)
                 };
-                Ok(Speaker { name, feed })
+                Ok(Speaker {
+                    name,
+                    stream: Some(spawn(&live, name, language.as_deref(), 0.0)?),
+                    language,
+                    heard: 0,
+                    listening: listen.then(Listening::default),
+                })
             })
             .collect::<Result<_>>()?;
         Ok(Self {
@@ -307,18 +419,11 @@ impl Transcriber {
     }
 
     // Lets each sidecar finish what it heard, then saves `<id>.transcript.json`.
-    pub fn finish(mut self, dir: &Path) -> Result<()> {
-        for speaker in &mut self.speakers {
-            if matches!(&speaker.feed, Feed::Waiting { speech, .. } if !speech.is_empty()) {
-                speaker.begin(&self.live, &self.languages);
-            }
-        }
+    pub fn finish(self, dir: &Path) -> Result<()> {
         let mut children = Vec::new();
-        for speaker in self.speakers {
-            if let Feed::Streaming(stream) = speaker.feed {
-                drop(stream.audio);
-                children.push((stream.child, stream.threads));
-            }
+        for stream in self.speakers.into_iter().filter_map(|s| s.stream) {
+            drop(stream.audio);
+            children.push((stream.child, stream.threads));
         }
         let deadline = Instant::now() + Duration::from_secs(15);
         for (mut child, threads) in children {
