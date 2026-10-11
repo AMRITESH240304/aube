@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import type { Transcript } from "$lib/transcript";
 
 export type Status = {
   id: string;
@@ -22,7 +23,7 @@ export type Recording = {
   path: string;
 };
 
-export type LiveTurn = { index: number; speaker: string; start: number; text: string };
+export type LiveTurn = { index: number; speaker: string | null; start: number; text: string };
 export type Language = { id: string; name: string; installed: boolean };
 type LiveText = LiveTurn & { recordingId: string };
 type LiveLanguage = { recordingId: string; speaker: string; language: string | null };
@@ -55,10 +56,12 @@ class Recorder {
   live = $state<LiveTurn[]>([]);
 
   #poll?: ReturnType<typeof setInterval>;
+  #continuedFrom = 0;
 
   get silent() {
     return (
-      !!this.status && !this.status.paused && !this.heardSound && this.status.elapsedSecs > SILENCE_HINT_SECS
+      !!this.status && !this.status.paused && !this.heardSound &&
+      this.status.elapsedSecs - this.#continuedFrom > SILENCE_HINT_SECS
     );
   }
 
@@ -113,16 +116,29 @@ class Recorder {
     this.installing = false;
   }
 
-  async start(title = defaultTitle()) {
+  async #savedTurns(id: string): Promise<LiveTurn[]> {
+    const transcript = await invoke<Transcript>("transcript", { id }).catch(() => null);
+    return (transcript?.segments ?? []).map(({ speaker, start, text }, i) => ({ index: -1 - i, speaker, start, text }));
+  }
+
+  async start(continuing?: Recording) {
     this.error = "";
+    const earlier = continuing ? await this.#savedTurns(continuing.id) : [];
     try {
-      await invoke("start_recording", { title, language: this.language || null });
+      await invoke("start_recording", {
+        title: defaultTitle(),
+        language: this.language || null,
+        resume: continuing?.id ?? null,
+      });
       this.heardSound = false;
-      this.live = [];
+      this.live = earlier;
       this.detected = {};
+      this.#continuedFrom = continuing?.durationSecs ?? 0;
       this.#startPolling();
+      return true;
     } catch (e) {
       this.error = String(e);
+      return false;
     }
   }
 

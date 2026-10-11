@@ -16,7 +16,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::{echo::Echo, err, lid, mixer::OUTPUT_RATE, transcripts::transcript_path, Result};
@@ -359,7 +359,12 @@ pub struct Transcriber {
 }
 
 impl Transcriber {
-    pub fn new(app: AppHandle, id: String, language: Option<String>) -> Result<Self> {
+    pub fn new(
+        app: AppHandle,
+        id: String,
+        language: Option<String>,
+        recorded: usize,
+    ) -> Result<Self> {
         let auto = language.as_deref() == Some(AUTO);
         let languages = if auto {
             thread::spawn(lid::detector);
@@ -386,11 +391,12 @@ impl Transcriber {
                 } else {
                     language.clone().filter(|_| !auto)
                 };
+                let offset = recorded as f64 / OUTPUT_RATE as f64;
                 Ok(Speaker {
                     name,
-                    stream: Some(spawn(&live, name, language.as_deref(), 0.0)?),
+                    stream: Some(spawn(&live, name, language.as_deref(), offset)?),
                     language,
-                    heard: 0,
+                    heard: recorded,
                     listening: listen.then(Listening::default),
                 })
             })
@@ -439,18 +445,23 @@ impl Transcriber {
             }
         }
 
+        let path = transcript_path(dir, &self.live.id);
         let mut turns = self.live.turns.lock().unwrap();
         turns.retain(|t| !t.text.is_empty());
         turns.sort_by(|a, b| a.start.total_cmp(&b.start));
-        let segments: Vec<_> = turns
+        let mut segments = saved_segments(&path);
+        segments.extend(turns.iter().map(
+            |t| json!({ "start": t.start, "end": t.end, "speaker": t.speaker, "text": t.text }),
+        ));
+        let text = segments
             .iter()
-            .map(
-                |t| json!({ "start": t.start, "end": t.end, "speaker": t.speaker, "text": t.text }),
-            )
-            .collect();
-        let text = turns
-            .iter()
-            .map(|t| format!("{}: {}", t.speaker, t.text))
+            .filter_map(|segment| {
+                let text = segment["text"].as_str()?;
+                Some(match segment["speaker"].as_str() {
+                    Some(speaker) => format!("{speaker}: {text}"),
+                    None => text.to_owned(),
+                })
+            })
             .collect::<Vec<_>>()
             .join("\n\n");
         let transcript = json!({
@@ -459,8 +470,19 @@ impl Transcriber {
             "segments": segments,
         });
         let bytes = serde_json::to_vec_pretty(&transcript).map_err(err)?;
-        std::fs::write(transcript_path(dir, &self.live.id), bytes).map_err(err)
+        std::fs::write(path, bytes).map_err(err)
     }
+}
+
+fn saved_segments(path: &Path) -> Vec<Value> {
+    std::fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .and_then(|mut transcript| match transcript["segments"].take() {
+            Value::Array(segments) => Some(segments),
+            _ => None,
+        })
+        .unwrap_or_default()
 }
 
 #[derive(Serialize, Deserialize)]

@@ -276,10 +276,22 @@ fn write_samples(writer: &mut Wav, shared: &Shared, frames: &[[f32; 2]]) -> Resu
 
 // Owns the audio streams (not Send on every platform) and the file writer.
 // Flushing every second keeps the file on disk if the process is killed.
+fn open_writer(saved: &Path, partial: &Path, continuing: bool) -> Result<Wav> {
+    if !continuing {
+        return hound::WavWriter::create(partial, WAV_SPEC).map_err(err);
+    }
+    fs::rename(saved, partial).map_err(err)?;
+    hound::WavWriter::append(partial).map_err(|e| {
+        let _ = fs::rename(partial, saved);
+        err(e)
+    })
+}
+
 fn record(
     app: AppHandle,
     dir: PathBuf,
     id: String,
+    continuing: bool,
     language: Option<String>,
     shared: Arc<Shared>,
     ready: mpsc::Sender<Result<()>>,
@@ -289,7 +301,7 @@ fn record(
     let (tx, rx) = mpsc::channel();
     let setup = || -> Result<_> {
         let mic = open_microphone(&host, tx.clone(), &shared)?;
-        let writer = hound::WavWriter::create(&path, WAV_SPEC).map_err(err)?;
+        let writer = open_writer(&dir.join(format!("{id}.wav")), &path, continuing)?;
         Ok((mic, writer))
     };
     let ((mic, mic_rate), mut writer) = match setup() {
@@ -299,12 +311,14 @@ fn record(
             return Err(e);
         }
     };
+    let recorded = writer.duration() as usize;
+    shared.frames.store(recorded as u64, Relaxed);
     let mut mixer = Mixer::new(mic_rate, None);
     let mut system = SystemAudio::open(&host, &tx, &shared, &mut mixer);
     let _ = ready.send(Ok(()));
 
     // Recording goes on without a transcript if transcription can't start.
-    let mut transcriber = Transcriber::new(app, id, language)
+    let mut transcriber = Transcriber::new(app, id, language, recorded)
         .map_err(|e| *shared.transcription_error.lock().unwrap() = Some(e))
         .ok();
     let mut last_flush = Instant::now();
@@ -406,6 +420,7 @@ pub fn start_recording(
     state: State<'_, Recorder>,
     title: String,
     language: Option<String>,
+    resume: Option<String>,
 ) -> Result<()> {
     let mut slot = state.session.lock().unwrap();
     if slot.is_some() {
@@ -413,11 +428,25 @@ pub fn start_recording(
     }
 
     let dir = recordings_dir(&app)?;
-    let started_at = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(err)?
-        .as_millis() as u64;
-    let id = started_at.to_string();
+    let continuing = resume.is_some();
+    let (id, title, new_meta) = match resume {
+        Some(id) => {
+            let meta = read_meta(&dir, &id).ok_or("This recording no longer exists.")?;
+            (id, meta.title, None)
+        }
+        None => {
+            let started_at = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(err)?
+                .as_millis() as u64;
+            let meta = Meta {
+                title: title.clone(),
+                started_at,
+                ..Default::default()
+            };
+            (started_at.to_string(), title, Some(meta))
+        }
+    };
     let shared = Arc::new(Shared::default());
     let (ready_tx, ready_rx) = mpsc::channel();
 
@@ -427,6 +456,7 @@ pub fn start_recording(
             app,
             thread_dir,
             thread_id,
+            continuing,
             language,
             thread_shared,
             ready_tx,
@@ -436,15 +466,9 @@ pub fn start_recording(
         .recv()
         .map_err(|_| "The recorder stopped unexpectedly.".to_string())??;
 
-    write_meta(
-        &dir,
-        &id,
-        &Meta {
-            title: title.clone(),
-            started_at,
-            ..Default::default()
-        },
-    )?;
+    if let Some(meta) = &new_meta {
+        write_meta(&dir, &id, meta)?;
+    }
     *slot = Some(Session {
         id,
         title,

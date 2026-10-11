@@ -1,8 +1,12 @@
 <script lang="ts">
-  import { formatDuration, recorder } from "$lib/recorder.svelte";
+  import { formatDuration, recorder, type Recording } from "$lib/recorder.svelte";
   import LanguagePicker from "./LanguagePicker.svelte";
 
-  let { onSaved }: { onSaved: (id: string) => void } = $props();
+  let {
+    continuing,
+    onStarted,
+    onSaved,
+  }: { continuing?: Recording; onStarted: () => void; onSaved: (id: string) => void } = $props();
 
   const status = $derived(recorder.status);
   const SHAPE = [0.45, 0.8, 1, 0.65, 0.35];
@@ -10,6 +14,10 @@
   async function stop() {
     const id = await recorder.stop();
     if (id) onSaved(id);
+  }
+
+  async function start() {
+    if (await recorder.start(continuing)) onStarted();
   }
 </script>
 
@@ -79,10 +87,10 @@
       <button
         class="flex items-center gap-2 rounded-full bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:opacity-60 dark:bg-white dark:text-zinc-900 dark:hover:bg-zinc-200"
         disabled={recorder.installing}
-        onclick={() => recorder.start()}
+        onclick={start}
       >
         <span class="size-2.5 rounded-full bg-red-500" aria-hidden="true"></span>
-        {recorder.installing ? "Downloading…" : "Start recording"}
+        {recorder.installing ? "Downloading…" : continuing ? "Continue recording" : "Start recording"}
       </button>
     {/if}
   </div>
