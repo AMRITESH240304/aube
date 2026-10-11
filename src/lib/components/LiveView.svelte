@@ -1,10 +1,15 @@
 <script lang="ts">
-  import { formatDuration, recorder } from "$lib/recorder.svelte";
+  import { AUTO_LANGUAGE, formatDuration, recorder } from "$lib/recorder.svelte";
   import Conversation from "./Conversation.svelte";
 
   let end = $state<HTMLElement>();
 
   const status = $derived(recorder.status!);
+  const detection = $derived(
+    Object.entries(recorder.detected)
+      .map(([speaker, language]) => `${speaker}: ${language ?? "Mac's language"}`)
+      .join(" · ") || "Detecting language…",
+  );
 
   // Follows new text, unless you've scrolled up to read.
   $effect(() => {
@@ -28,6 +33,9 @@
     <h2 id="live-heading" class="truncate text-xl font-semibold">{status.title}</h2>
     <p class="text-sm text-zinc-500 tabular-nums">
       {status.paused ? "Paused" : "Live transcript"} · {formatDuration(status.elapsedSecs)}
+      {#if recorder.language === AUTO_LANGUAGE}
+        · {detection}
+      {/if}
     </p>
   </div>
 

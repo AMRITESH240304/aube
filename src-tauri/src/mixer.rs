@@ -112,6 +112,7 @@ pub struct Mixer {
     origin: Option<StreamInstant>,
     mic: Track,
     system: Option<Track>,
+    drained: u64,
 }
 
 impl Mixer {
@@ -120,6 +121,18 @@ impl Mixer {
             origin: None,
             mic: Track::new(mic_rate),
             system: system_rate.map(Track::new),
+            drained: 0,
+        }
+    }
+
+    pub fn set_system_rate(&mut self, rate: u32) {
+        match &mut self.system {
+            Some(track) => track.resampler = Resampler::new(rate),
+            None => {
+                let mut track = Track::new(rate);
+                track.position = self.drained;
+                self.system = Some(track);
+            }
         }
     }
 
@@ -143,6 +156,7 @@ impl Mixer {
             Some(system) => mic.max(system),
             None => mic,
         };
+        self.drained += n as u64;
         (0..n)
             .map(|_| [self.mic.pop(), self.system.as_mut().map_or(0.0, Track::pop)])
             .collect()
@@ -160,12 +174,17 @@ mod tests {
     // 10 ms chunks of silence with a click at `click` seconds, as the device
     // would deliver them between `from` and `to` seconds.
     fn chunks(source: Source, from: f64, to: f64, click: f64) -> Vec<Chunk> {
+        chunks_at(OUTPUT_RATE, source, from, to, click)
+    }
+
+    fn chunks_at(rate: u32, source: Source, from: f64, to: f64, click: f64) -> Vec<Chunk> {
+        let len = rate as usize / 100;
         let mut out = Vec::new();
         let mut t = from;
         while t < to - 1e-9 {
-            let mut samples = vec![0.0; 480];
-            let at = ((click - t) * OUTPUT_RATE as f64).round();
-            if (0.0..480.0).contains(&at) {
+            let mut samples = vec![0.0; len];
+            let at = ((click - t) * rate as f64).round();
+            if (0.0..len as f64).contains(&at) {
                 samples[at as usize] = 1.0;
             }
             let captured = StreamInstant::from_secs_f64(100.0 + t);
@@ -180,29 +199,47 @@ mod tests {
         out
     }
 
-    #[test]
-    fn late_and_interrupted_sources_stay_in_step() {
-        let mut mixer = Mixer::new(OUTPUT_RATE, Some(OUTPUT_RATE));
-        let mut mic = chunks(Source::Mic, 0.0, 10.0, 7.0).into_iter().peekable();
-        // The call starts half a second late and goes quiet from 3 s to 5 s.
-        let mut call = chunks(Source::System, 0.5, 3.0, 7.0)
-            .into_iter()
-            .chain(chunks(Source::System, 5.0, 10.0, 7.0))
-            .peekable();
+    fn play(mixer: &mut Mixer, mic: Vec<Chunk>, call: Vec<Chunk>) -> Vec<[f32; 2]> {
+        let mut chunks: Vec<Chunk> = mic.into_iter().chain(call).collect();
+        chunks.sort_by_key(|chunk| chunk.captured);
         let mut out = Vec::new();
-        while mic.peek().is_some() || call.peek().is_some() {
-            let take_mic = match (mic.peek(), call.peek()) {
-                (Some(m), Some(c)) => m.captured <= c.captured,
-                (m, _) => m.is_some(),
-            };
-            mixer.push(if take_mic { mic.next() } else { call.next() }.unwrap());
+        for chunk in chunks {
+            mixer.push(chunk);
             out.extend(mixer.drain(false));
         }
         out.extend(mixer.drain(true));
-        // Within a sample or two: the resampler holds one back.
-        let find = |i: usize| out.iter().position(|f| f[i] > 0.5).unwrap() as i64;
-        assert!((find(0) - find(1)).abs() <= 2, "{} vs {}", find(0), find(1));
-        assert!((find(0) - 7 * OUTPUT_RATE as i64).abs() <= 2);
+        out
+    }
+
+    fn click(out: &[[f32; 2]], source: usize) -> i64 {
+        out.iter().position(|f| f[source] > 0.5).unwrap() as i64
+    }
+
+    #[test]
+    fn call_audio_arriving_mid_recording_at_another_rate_stays_in_step() {
+        let mut mixer = Mixer::new(OUTPUT_RATE, None);
+        let mut out = play(&mut mixer, chunks(Source::Mic, 0.0, 4.0, 9.0), Vec::new());
+        mixer.set_system_rate(44_100);
+        out.extend(play(
+            &mut mixer,
+            chunks(Source::Mic, 4.0, 10.0, 7.0),
+            chunks_at(44_100, Source::System, 4.0, 10.0, 7.0),
+        ));
+        assert!((click(&out, 0) - click(&out, 1)).abs() <= 2);
+        assert!((click(&out, 0) - 7 * OUTPUT_RATE as i64).abs() <= 2);
+    }
+
+    #[test]
+    fn late_and_interrupted_sources_stay_in_step() {
+        let mut mixer = Mixer::new(OUTPUT_RATE, Some(OUTPUT_RATE));
+        // The call starts half a second late and goes quiet from 3 s to 5 s.
+        let call = chunks(Source::System, 0.5, 3.0, 7.0)
+            .into_iter()
+            .chain(chunks(Source::System, 5.0, 10.0, 7.0))
+            .collect();
+        let out = play(&mut mixer, chunks(Source::Mic, 0.0, 10.0, 7.0), call);
+        assert!((click(&out, 0) - click(&out, 1)).abs() <= 2);
+        assert!((click(&out, 0) - 7 * OUTPUT_RATE as i64).abs() <= 2);
     }
 
     #[test]

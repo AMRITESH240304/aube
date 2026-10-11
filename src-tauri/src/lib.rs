@@ -1,6 +1,7 @@
 use tauri::{Manager, RunEvent};
 
 mod echo;
+mod lid;
 mod mixer;
 #[cfg(target_os = "macos")]
 mod permission;
@@ -35,6 +36,8 @@ pub fn run() {
             transcripts::transcript,
             transcripts::delete_recording,
             transcripts::search_transcripts,
+            stt::transcription_languages,
+            stt::install_language,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import type { Transcript } from "$lib/transcript";
 
 export type Status = {
   id: string;
@@ -22,10 +23,22 @@ export type Recording = {
   path: string;
 };
 
-export type LiveTurn = { index: number; speaker: string; start: number; text: string };
+export type LiveTurn = { index: number; speaker: string | null; start: number; text: string };
+export type Language = { id: string; name: string; installed: boolean };
 type LiveText = LiveTurn & { recordingId: string };
+type LiveLanguage = { recordingId: string; speaker: string; language: string | null };
 
 const SILENCE_HINT_SECS = 5;
+const LANGUAGE_KEY = "aube.language";
+export const AUTO_LANGUAGE = "auto";
+
+function storedLanguage() {
+  try {
+    return localStorage.getItem(LANGUAGE_KEY) ?? AUTO_LANGUAGE;
+  } catch {
+    return AUTO_LANGUAGE;
+  }
+}
 
 class Recorder {
   status = $state<Status | null>(null);
@@ -34,14 +47,21 @@ class Recorder {
   error = $state("");
   heardSound = $state(false);
   saving = $state(false);
+  // Transcription language; empty means the Mac's own.
+  languages = $state<Language[]>([]);
+  language = $state(storedLanguage());
+  installing = $state(false);
+  detected = $state<Record<string, string | null>>({});
   // Rough preview while recording; each turn's newer text replaces its older guess.
   live = $state<LiveTurn[]>([]);
 
   #poll?: ReturnType<typeof setInterval>;
+  #continuedFrom = 0;
 
   get silent() {
     return (
-      !!this.status && !this.status.paused && !this.heardSound && this.status.elapsedSecs > SILENCE_HINT_SECS
+      !!this.status && !this.status.paused && !this.heardSound &&
+      this.status.elapsedSecs - this.#continuedFrom > SILENCE_HINT_SECS
     );
   }
 
@@ -51,6 +71,11 @@ class Recorder {
       const others = this.live.filter((t) => t.index !== turn.index);
       this.live = (turn.text ? [...others, turn] : others).sort((a, b) => a.start - b.start);
     });
+    listen<LiveLanguage>("live-language", ({ payload: { recordingId, speaker, language } }) => {
+      if (recordingId !== this.status?.id) return;
+      this.detected = { ...this.detected, [speaker]: language };
+    });
+    this.#loadLanguages();
     await this.refresh();
     this.status = await invoke<Status | null>("recording_status");
     if (this.status) this.#startPolling();
@@ -61,15 +86,59 @@ class Recorder {
     this.loaded = true;
   }
 
-  async start(title = defaultTitle()) {
-    this.error = "";
+  async #loadLanguages() {
+    this.languages = await invoke<Language[]>("transcription_languages").catch(() => []);
+    // The list has one entry per language, so an earlier regional pick maps onto it.
+    const base = (id: string) => id.split("-")[0];
+    const listed = this.languages.find((l) => base(l.id) === base(this.language));
+    if (this.language && listed && listed.id !== this.language) this.#remember(listed.id);
+  }
+
+  #remember(id: string) {
+    this.language = id;
     try {
-      await invoke("start_recording", { title });
-      this.heardSound = false;
-      this.live = [];
-      this.#startPolling();
+      localStorage.setItem(LANGUAGE_KEY, id);
+    } catch {}
+  }
+
+  // A language's model downloads once, when picked, so recording starts ready.
+  async setLanguage(id: string) {
+    this.#remember(id);
+    if (!id || id === AUTO_LANGUAGE || this.languages.find((l) => l.id === id)?.installed) return;
+    this.error = "";
+    this.installing = true;
+    try {
+      await invoke("install_language", { id });
+      await this.#loadLanguages();
     } catch (e) {
       this.error = String(e);
+    }
+    this.installing = false;
+  }
+
+  async #savedTurns(id: string): Promise<LiveTurn[]> {
+    const transcript = await invoke<Transcript>("transcript", { id }).catch(() => null);
+    return (transcript?.segments ?? []).map(({ speaker, start, text }, i) => ({ index: -1 - i, speaker, start, text }));
+  }
+
+  async start(continuing?: Recording) {
+    this.error = "";
+    const earlier = continuing ? await this.#savedTurns(continuing.id) : [];
+    try {
+      await invoke("start_recording", {
+        title: defaultTitle(),
+        language: this.language || null,
+        resume: continuing?.id ?? null,
+      });
+      this.heardSound = false;
+      this.live = earlier;
+      this.detected = {};
+      this.#continuedFrom = continuing?.durationSecs ?? 0;
+      this.#startPolling();
+      return true;
+    } catch (e) {
+      this.error = String(e);
+      return false;
     }
   }
 

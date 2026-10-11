@@ -52,6 +52,6 @@
         </div>
       {/if}
     </main>
-    <RecordBar onSaved={openRecording} />
+    <RecordBar continuing={open} onStarted={() => navigate({ kind: "home" })} onSaved={openRecording} />
   </div>
 </div>
