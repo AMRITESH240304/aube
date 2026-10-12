@@ -5,7 +5,6 @@
 use std::{
     collections::{HashMap, VecDeque},
     io::{BufRead, BufReader, Write},
-    path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed},
@@ -16,10 +15,17 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::json;
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::{echo::Echo, err, lid, mixer::OUTPUT_RATE, transcripts::transcript_path, Result};
+use crate::{
+    echo::Echo,
+    err,
+    library::{Db, Segment},
+    lid,
+    mixer::OUTPUT_RATE,
+    Result,
+};
 
 // Frames arrive as [mic, call], matching this order.
 const SPEAKERS: [&str; 2] = ["You", "Them"];
@@ -29,7 +35,7 @@ const CHECK_EVERY: usize = 4 * lid::RATE;
 const SPEECH_WINDOW: usize = 8 * lid::RATE;
 const REWIND: usize = 8 * OUTPUT_RATE as usize;
 const QUIET: f32 = 0.02;
-const GUESSES: &str = "detected-languages.json";
+const GUESSES: &str = "detected-languages";
 
 #[derive(Deserialize)]
 #[serde(untagged)]
@@ -70,7 +76,6 @@ struct Live {
     error: Mutex<Option<String>>,
     streams: AtomicUsize,
     guesses: Mutex<HashMap<String, String>>,
-    guesses_path: Option<PathBuf>,
 }
 
 impl Live {
@@ -145,8 +150,8 @@ impl Live {
     fn remember(&self, speaker: &str, language: &Language) {
         let mut guesses = self.guesses.lock().unwrap();
         guesses.insert(speaker.to_owned(), language.id.clone());
-        if let (Some(path), Ok(bytes)) = (&self.guesses_path, serde_json::to_vec(&*guesses)) {
-            let _ = std::fs::write(path, bytes);
+        if let Ok(value) = serde_json::to_string(&*guesses) {
+            let _ = self.app.state::<Db>().set_setting(GUESSES, &value);
         }
     }
 }
@@ -345,9 +350,10 @@ fn detect<'a>(speech: &[f32], languages: &'a [Language]) -> Option<&'a Language>
     languages.iter().find(|l| l.code() == code)
 }
 
-fn saved_guesses(path: Option<&Path>) -> HashMap<String, String> {
-    path.and_then(|path| std::fs::read(path).ok())
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+fn saved_guesses(app: &AppHandle) -> HashMap<String, String> {
+    app.state::<Db>()
+        .setting(GUESSES)
+        .and_then(|value| serde_json::from_str(&value).ok())
         .unwrap_or_default()
 }
 
@@ -373,15 +379,13 @@ impl Transcriber {
             Vec::new()
         };
         let listen = !languages.is_empty();
-        let guesses_path = app.path().app_data_dir().ok().map(|dir| dir.join(GUESSES));
         let live = Arc::new(Live {
+            guesses: Mutex::new(saved_guesses(&app)),
             app,
             id,
             turns: Mutex::default(),
             error: Mutex::default(),
             streams: AtomicUsize::new(0),
-            guesses: Mutex::new(saved_guesses(guesses_path.as_deref())),
-            guesses_path,
         });
         let speakers = SPEAKERS
             .into_iter()
@@ -424,8 +428,7 @@ impl Transcriber {
         self.live.error.lock().unwrap().clone()
     }
 
-    // Lets each sidecar finish what it heard, then saves `<id>.transcript.json`.
-    pub fn finish(self, dir: &Path) -> Result<()> {
+    pub fn finish(self) -> Result<()> {
         let mut children = Vec::new();
         for stream in self.speakers.into_iter().filter_map(|s| s.stream) {
             drop(stream.audio);
@@ -445,44 +448,23 @@ impl Transcriber {
             }
         }
 
-        let path = transcript_path(dir, &self.live.id);
         let mut turns = self.live.turns.lock().unwrap();
-        turns.retain(|t| !t.text.is_empty());
         turns.sort_by(|a, b| a.start.total_cmp(&b.start));
-        let mut segments = saved_segments(&path);
-        segments.extend(turns.iter().map(
-            |t| json!({ "start": t.start, "end": t.end, "speaker": t.speaker, "text": t.text }),
-        ));
-        let text = segments
-            .iter()
-            .filter_map(|segment| {
-                let text = segment["text"].as_str()?;
-                Some(match segment["speaker"].as_str() {
-                    Some(speaker) => format!("{speaker}: {text}"),
-                    None => text.to_owned(),
-                })
+        let segments: Vec<Segment> = turns
+            .drain(..)
+            .filter(|turn| !turn.text.is_empty())
+            .map(|turn| Segment {
+                speaker: Some(turn.speaker.to_owned()),
+                start: turn.start,
+                end: turn.end,
+                text: turn.text,
             })
-            .collect::<Vec<_>>()
-            .join("\n\n");
-        let transcript = json!({
-            "text": text,
-            "speech_detected": !segments.is_empty(),
-            "segments": segments,
-        });
-        let bytes = serde_json::to_vec_pretty(&transcript).map_err(err)?;
-        std::fs::write(path, bytes).map_err(err)
+            .collect();
+        self.live
+            .app
+            .state::<Db>()
+            .add_segments(&self.live.id, &segments)
     }
-}
-
-fn saved_segments(path: &Path) -> Vec<Value> {
-    std::fs::read(path)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-        .and_then(|mut transcript| match transcript["segments"].take() {
-            Value::Array(segments) => Some(segments),
-            _ => None,
-        })
-        .unwrap_or_default()
 }
 
 #[derive(Serialize, Deserialize)]

@@ -1,13 +1,13 @@
 use tauri::{Manager, RunEvent};
 
 mod echo;
+mod library;
 mod lid;
 mod mixer;
 #[cfg(target_os = "macos")]
 mod permission;
 mod recorder;
 mod stt;
-mod transcripts;
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -18,12 +18,9 @@ fn err(e: impl std::fmt::Display) -> String {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
         .manage(recorder::Recorder::default())
         .setup(|app| {
-            if let Err(e) = recorder::recover_interrupted(app.handle()) {
-                eprintln!("recovery failed: {e}");
-            }
+            app.manage(library::Db::open(app.handle())?);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -31,11 +28,13 @@ pub fn run() {
             recorder::stop_recording,
             recorder::set_paused,
             recorder::recording_status,
-            recorder::list_recordings,
-            recorder::rename_recording,
-            transcripts::transcript,
-            transcripts::delete_recording,
-            transcripts::search_transcripts,
+            library::list_recordings,
+            library::rename_recording,
+            library::delete_recording,
+            library::transcript,
+            library::search_transcripts,
+            library::note,
+            library::save_note,
             stt::transcription_languages,
             stt::install_language,
         ])

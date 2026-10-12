@@ -18,9 +18,7 @@ export type Recording = {
   title: string;
   startedAt: number;
   durationSecs: number;
-  recovered: boolean;
   transcribed: boolean;
-  path: string;
 };
 
 export type LiveTurn = { index: number; speaker: string | null; start: number; text: string };

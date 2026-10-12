@@ -163,10 +163,6 @@ impl Mixer {
     }
 }
 
-pub fn mix([mic, system]: [f32; 2]) -> i16 {
-    ((mic + system).clamp(-1.0, 1.0) * i16::MAX as f32) as i16
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

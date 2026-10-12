@@ -33,22 +33,24 @@
   <Sidebar {view} bind:query onNavigate={navigate} />
 
   <div class="relative flex min-w-0 flex-1 flex-col">
-    <main class="flex-1 overflow-y-auto pb-24">
+    <main class="flex min-h-0 flex-1 flex-col">
       {#if open}
         {#key open.id}
           <RecordingView recording={open} at={openAt} onBack={() => (openId = null)} />
         {/key}
+      {:else if !query.trim() && view.kind === "home" && recorder.status}
+        <LiveView />
       {:else}
-        <div class="mx-auto w-full max-w-3xl px-8 py-8">
-          {#if query.trim()}
-            <SearchResults {query} onOpen={openRecording} />
-          {:else if view.kind === "home" && recorder.status}
-            <LiveView />
-          {:else if view.kind === "home"}
-            <Recordings limit={5} onOpen={openRecording} onViewAll={() => navigate({ kind: "all" })} />
-          {:else}
-            <Recordings onOpen={openRecording} />
-          {/if}
+        <div class="flex-1 overflow-y-auto pb-24">
+          <div class="mx-auto w-full max-w-3xl px-8 py-8">
+            {#if query.trim()}
+              <SearchResults {query} onOpen={openRecording} />
+            {:else if view.kind === "home"}
+              <Recordings limit={5} onOpen={openRecording} onViewAll={() => navigate({ kind: "all" })} />
+            {:else}
+              <Recordings onOpen={openRecording} />
+            {/if}
+          </div>
         </div>
       {/if}
     </main>

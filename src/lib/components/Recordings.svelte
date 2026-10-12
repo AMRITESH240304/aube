@@ -51,14 +51,6 @@
               {startedAt(recording.startedAt)} · {formatDuration(recording.durationSecs)}
             </p>
           </button>
-          {#if recording.recovered}
-            <span
-              class="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-950 dark:text-amber-300"
-              title="The app closed during this recording. Everything up to that moment was saved."
-            >
-              Recovered
-            </span>
-          {/if}
         </li>
       {/each}
     </ul>
