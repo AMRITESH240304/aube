@@ -7,7 +7,9 @@ mod mixer;
 #[cfg(target_os = "macos")]
 mod permission;
 mod recorder;
+mod speakers;
 mod stt;
+mod tape;
 
 type Result<T> = std::result::Result<T, String>;
 

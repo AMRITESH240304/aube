@@ -18,6 +18,7 @@ use crate::{
     err,
     library::{self, Db},
     mixer::{Chunk, Mixer, Source, OUTPUT_RATE},
+    speakers,
     stt::Transcriber,
     Result,
 };
@@ -269,6 +270,7 @@ fn record(
     if let Some(mut transcriber) = transcriber {
         transcriber.push(&samples);
         transcriber.finish()?;
+        speakers::identify(app, id);
     }
     Ok(())
 }

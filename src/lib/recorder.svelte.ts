@@ -25,6 +25,7 @@ export type LiveTurn = { index: number; speaker: string | null; start: number; t
 export type Language = { id: string; name: string; installed: boolean };
 type LiveText = LiveTurn & { recordingId: string };
 type LiveLanguage = { recordingId: string; speaker: string; language: string | null };
+type SpeakerProgress = { recordingId: string; working: boolean };
 
 const SILENCE_HINT_SECS = 5;
 const LANGUAGE_KEY = "aube.language";
@@ -52,6 +53,8 @@ class Recorder {
   detected = $state<Record<string, string | null>>({});
   // Rough preview while recording; each turn's newer text replaces its older guess.
   live = $state<LiveTurn[]>([]);
+  identifyingSpeakers = $state<string[]>([]);
+  speakersIdentified = $state<Record<string, number>>({});
 
   #poll?: ReturnType<typeof setInterval>;
   #continuedFrom = 0;
@@ -72,6 +75,11 @@ class Recorder {
     listen<LiveLanguage>("live-language", ({ payload: { recordingId, speaker, language } }) => {
       if (recordingId !== this.status?.id) return;
       this.detected = { ...this.detected, [speaker]: language };
+    });
+    listen<SpeakerProgress>("speakers", ({ payload: { recordingId, working } }) => {
+      const others = this.identifyingSpeakers.filter((id) => id !== recordingId);
+      this.identifyingSpeakers = working ? [...others, recordingId] : others;
+      if (!working) this.speakersIdentified = { ...this.speakersIdentified, [recordingId]: Date.now() };
     });
     this.#loadLanguages();
     await this.refresh();

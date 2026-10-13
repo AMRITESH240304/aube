@@ -1,0 +1,514 @@
+use std::{collections::HashMap, process::Command, sync::Mutex, thread};
+
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+use tauri::{path::BaseDirectory, AppHandle, Emitter, Manager};
+
+use crate::{
+    err,
+    library::{Db, Segment, Word},
+    tape::{self, Channel},
+    Result,
+};
+
+const CALL_SPEECH_FOR_ONLINE: f64 = 15.0;
+const MIC_SPEECH_FOR_IN_PERSON: f64 = 60.0;
+const MOST_CALL_SPEECH_IN_PERSON: f64 = 5.0;
+const LEAST_DIARIZED_SPEECH: f64 = 30.0;
+const SHORTEST_TURN: f64 = 0.25;
+const NEAREST_TURN: f64 = 1.0;
+
+const VOICEPRINT: &str = "voiceprint";
+const VOICEPRINT_MODEL: &str = "fluidaudio-0.17.7-offline";
+const ENROLL_LEAST_SPEECH: f64 = 20.0;
+const ENROLL_DOMINANT_SHARE: f64 = 0.8;
+const ENROLL_ENOUGH_SPEECH: f64 = 600.0;
+const SELF_MATCH: f32 = 0.5;
+
+static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Reply {
+    Done(Diarization),
+    Failed { error: String },
+}
+
+#[derive(Deserialize)]
+struct Diarization {
+    segments: Vec<Turn>,
+    voices: HashMap<String, Vec<f32>>,
+}
+
+#[derive(Deserialize, Clone)]
+struct Turn {
+    speaker: String,
+    start: f64,
+    end: f64,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Voiceprint {
+    model: String,
+    voice: Vec<f32>,
+    seconds: f64,
+}
+
+impl Diarization {
+    fn speech_by_speaker(&self) -> Vec<(&str, f64)> {
+        let mut speech: Vec<(&str, f64)> = Vec::new();
+        for turn in &self.segments {
+            match speech
+                .iter_mut()
+                .find(|(speaker, _)| *speaker == turn.speaker)
+            {
+                Some((_, seconds)) => *seconds += turn.end - turn.start,
+                None => speech.push((&turn.speaker, turn.end - turn.start)),
+            }
+        }
+        speech
+    }
+
+    fn total_speech(&self) -> f64 {
+        self.segments.iter().map(|turn| turn.end - turn.start).sum()
+    }
+
+    fn dominant(&self) -> Option<(&str, f64)> {
+        self.speech_by_speaker()
+            .into_iter()
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+    }
+
+    fn names(&self, you: Option<&str>) -> HashMap<String, String> {
+        let mut names = HashMap::new();
+        let mut others = 0;
+        for (speaker, _) in self.speech_by_speaker() {
+            let name = if Some(speaker) == you {
+                "You".to_owned()
+            } else {
+                others += 1;
+                format!("Speaker {others}")
+            };
+            names.insert(speaker.to_owned(), name);
+        }
+        names
+    }
+}
+
+pub fn identify(app: AppHandle, recording: String) {
+    thread::spawn(move || {
+        let _one_at_a_time = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+        announce(&app, &recording, true);
+        if let Err(e) = relabel_recording(&app, &recording) {
+            eprintln!("couldn't tell speakers apart in {recording}: {e}");
+        }
+        announce(&app, &recording, false);
+    });
+}
+
+fn announce(app: &AppHandle, recording: &str, working: bool) {
+    let _ = app.emit(
+        "speakers",
+        json!({ "recordingId": recording, "working": working }),
+    );
+}
+
+fn relabel_recording(app: &AppHandle, recording: &str) -> Result<()> {
+    let db = app.state::<Db>();
+    let segments = db.segments(recording)?;
+    let speech = |channel| -> f64 {
+        segments
+            .iter()
+            .filter(|s| s.source == Some(channel))
+            .map(|s| s.end - s.start)
+            .sum()
+    };
+    let (mic, call) = (speech(Channel::Mic), speech(Channel::Call));
+    let relabeled = if call >= CALL_SPEECH_FOR_ONLINE {
+        if mic >= ENROLL_LEAST_SPEECH {
+            if let Err(e) = enroll(app, recording) {
+                eprintln!("couldn't learn your voice from {recording}: {e}");
+            }
+        }
+        let call = diarize(app, recording, Channel::Call)?;
+        relabel(&segments, Channel::Call, &call, None)
+    } else if mic >= MIC_SPEECH_FOR_IN_PERSON && call <= MOST_CALL_SPEECH_IN_PERSON {
+        let room = diarize(app, recording, Channel::Mic)?;
+        let you = find_you(&room, voiceprint(app).as_ref());
+        relabel(&segments, Channel::Mic, &room, you.as_deref())
+    } else {
+        return Ok(());
+    };
+    db.replace_segments(recording, segments.len(), &relabeled)
+}
+
+fn relabel(
+    segments: &[Segment],
+    channel: Channel,
+    diarization: &Diarization,
+    you: Option<&str>,
+) -> Vec<Segment> {
+    let distinct = diarization.speech_by_speaker().len() >= 2
+        && diarization.total_speech() >= LEAST_DIARIZED_SPEECH;
+    let names = if distinct {
+        diarization.names(you)
+    } else {
+        HashMap::new()
+    };
+    let fallback = match channel {
+        Channel::Mic => "You",
+        Channel::Call => "Them",
+    };
+    segments
+        .iter()
+        .flat_map(|segment| {
+            if segment.source == Some(channel) {
+                split(segment, &diarization.segments, &names, fallback)
+            } else {
+                vec![segment.clone()]
+            }
+        })
+        .collect()
+}
+
+fn speaker_at(turns: &[Turn], start: f64, end: f64) -> Option<&str> {
+    let overlap = |turn: &Turn| end.min(turn.end) - start.max(turn.start);
+    let gap = |turn: &Turn| (turn.start - end).max(start - turn.end);
+    turns
+        .iter()
+        .filter(|turn| overlap(turn) > 0.0)
+        .max_by(|a, b| overlap(a).total_cmp(&overlap(b)))
+        .or_else(|| {
+            turns
+                .iter()
+                .filter(|turn| gap(turn) <= NEAREST_TURN)
+                .min_by(|a, b| gap(a).total_cmp(&gap(b)))
+        })
+        .map(|turn| turn.speaker.as_str())
+}
+
+fn split(
+    segment: &Segment,
+    turns: &[Turn],
+    names: &HashMap<String, String>,
+    fallback: &str,
+) -> Vec<Segment> {
+    let name = |speaker: Option<&str>| {
+        speaker
+            .and_then(|speaker| names.get(speaker))
+            .map_or(fallback, String::as_str)
+            .to_owned()
+    };
+    let whole = || {
+        vec![Segment {
+            speaker: Some(name(speaker_at(turns, segment.start, segment.end))),
+            ..segment.clone()
+        }]
+    };
+    if segment.words.is_empty() {
+        return whole();
+    }
+    let mut speakers: Vec<Option<&str>> = segment
+        .words
+        .iter()
+        .map(|word| match (word.start, word.end) {
+            (Some(start), Some(end)) => speaker_at(turns, start, end),
+            _ => None,
+        })
+        .collect();
+    fill_gaps(&mut speakers);
+    smooth_single_words(&mut speakers);
+    if speakers.iter().all(Option::is_none) {
+        return whole();
+    }
+
+    let mut pieces: Vec<(Option<&str>, Vec<Word>)> = Vec::new();
+    for (word, speaker) in segment.words.iter().zip(speakers) {
+        match pieces.last_mut() {
+            Some((last, words)) if *last == speaker => words.push(word.clone()),
+            _ => pieces.push((speaker, vec![word.clone()])),
+        }
+    }
+    pieces
+        .into_iter()
+        .filter_map(|(speaker, words)| {
+            let text = words
+                .iter()
+                .map(|word| word.text.as_str())
+                .collect::<String>()
+                .trim()
+                .to_owned();
+            (!text.is_empty()).then(|| Segment {
+                speaker: Some(name(speaker)),
+                start: words
+                    .iter()
+                    .find_map(|word| word.start)
+                    .unwrap_or(segment.start),
+                end: words
+                    .iter()
+                    .rev()
+                    .find_map(|word| word.end)
+                    .unwrap_or(segment.end),
+                text,
+                source: segment.source,
+                words,
+            })
+        })
+        .collect()
+}
+
+fn fill_gaps(speakers: &mut [Option<&str>]) {
+    let mut previous = None;
+    for speaker in speakers.iter_mut() {
+        match speaker {
+            Some(_) => previous = *speaker,
+            None => *speaker = previous,
+        }
+    }
+    let first = speakers.iter().find_map(|speaker| *speaker);
+    for speaker in speakers.iter_mut().take_while(|speaker| speaker.is_none()) {
+        *speaker = first;
+    }
+}
+
+fn smooth_single_words(speakers: &mut [Option<&str>]) {
+    for i in 1..speakers.len().saturating_sub(1) {
+        if speakers[i - 1] == speakers[i + 1] {
+            speakers[i] = speakers[i - 1];
+        }
+    }
+}
+
+fn diarize(app: &AppHandle, recording: &str, channel: Channel) -> Result<Diarization> {
+    let audio = tape::path(app, recording, channel)?;
+    if !audio.exists() {
+        return Err(format!("no {} audio was kept", channel.name()));
+    }
+    let program = std::env::current_exe()
+        .map_err(err)?
+        .with_file_name("aube-diarizer");
+    let models = app
+        .path()
+        .resolve("models/diarizer", BaseDirectory::Resource)
+        .map_err(err)?;
+    let output = Command::new(program)
+        .arg(models)
+        .arg(audio)
+        .output()
+        .map_err(err)?;
+    let reply = String::from_utf8_lossy(&output.stdout);
+    let last = reply.lines().last().unwrap_or_default();
+    match serde_json::from_str(last).map_err(err)? {
+        Reply::Done(mut diarization) => {
+            diarization
+                .segments
+                .retain(|turn| turn.end - turn.start >= SHORTEST_TURN);
+            diarization
+                .segments
+                .sort_by(|a, b| a.start.total_cmp(&b.start));
+            Ok(diarization)
+        }
+        Reply::Failed { error } => Err(error),
+    }
+}
+
+fn normalized(voice: &[f32]) -> Vec<f32> {
+    let length = voice.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if length == 0.0 {
+        return voice.to_vec();
+    }
+    voice.iter().map(|x| x / length).collect()
+}
+
+fn similarity(a: &[f32], b: &[f32]) -> f32 {
+    normalized(a)
+        .iter()
+        .zip(normalized(b))
+        .map(|(x, y)| x * y)
+        .sum()
+}
+
+fn voiceprint(app: &AppHandle) -> Option<Voiceprint> {
+    app.state::<Db>()
+        .setting(VOICEPRINT)
+        .and_then(|value| serde_json::from_str::<Voiceprint>(&value).ok())
+        .filter(|print| print.model == VOICEPRINT_MODEL)
+}
+
+fn find_you(room: &Diarization, voiceprint: Option<&Voiceprint>) -> Option<String> {
+    match voiceprint {
+        Some(print) => room
+            .voices
+            .iter()
+            .map(|(speaker, voice)| (speaker, similarity(voice, &print.voice)))
+            .filter(|(_, score)| *score >= SELF_MATCH)
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(speaker, _)| speaker.clone()),
+        None => room.dominant().map(|(speaker, _)| speaker.to_owned()),
+    }
+}
+
+fn enroll(app: &AppHandle, recording: &str) -> Result<()> {
+    let known = voiceprint(app);
+    if known
+        .as_ref()
+        .is_some_and(|print| print.seconds >= ENROLL_ENOUGH_SPEECH)
+    {
+        return Ok(());
+    }
+    let mic = diarize(app, recording, Channel::Mic)?;
+    let total = mic.total_speech();
+    let Some((speaker, seconds)) = mic.dominant() else {
+        return Ok(());
+    };
+    if seconds < ENROLL_LEAST_SPEECH || seconds / total < ENROLL_DOMINANT_SHARE {
+        return Ok(());
+    }
+    let Some(voice) = mic.voices.get(speaker) else {
+        return Ok(());
+    };
+    let print = learn(known, voice, seconds);
+    let value = serde_json::to_string(&print).map_err(err)?;
+    app.state::<Db>().set_setting(VOICEPRINT, &value)
+}
+
+fn learn(known: Option<Voiceprint>, voice: &[f32], seconds: f64) -> Voiceprint {
+    let voice = normalized(voice);
+    let Some(known) = known else {
+        return Voiceprint {
+            model: VOICEPRINT_MODEL.to_owned(),
+            voice,
+            seconds,
+        };
+    };
+    let total = known.seconds + seconds;
+    let blended: Vec<f32> = known
+        .voice
+        .iter()
+        .zip(&voice)
+        .map(|(old, new)| (old * known.seconds as f32 + new * seconds as f32) / total as f32)
+        .collect();
+    Voiceprint {
+        model: VOICEPRINT_MODEL.to_owned(),
+        voice: normalized(&blended),
+        seconds: total,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn turn(speaker: &str, start: f64, end: f64) -> Turn {
+        Turn {
+            speaker: speaker.into(),
+            start,
+            end,
+        }
+    }
+
+    fn word(text: &str, start: f64, end: f64) -> Word {
+        Word {
+            text: text.into(),
+            start: Some(start),
+            end: Some(end),
+        }
+    }
+
+    fn diarization(turns: Vec<Turn>) -> Diarization {
+        Diarization {
+            segments: turns,
+            voices: HashMap::from([("S1".into(), vec![1.0, 0.0]), ("S2".into(), vec![0.0, 1.0])]),
+        }
+    }
+
+    fn call_segment(words: Vec<Word>) -> Segment {
+        Segment {
+            speaker: Some("Them".into()),
+            start: words[0].start.unwrap(),
+            end: words.last().unwrap().end.unwrap(),
+            text: words
+                .iter()
+                .map(|w| w.text.as_str())
+                .collect::<String>()
+                .trim()
+                .into(),
+            source: Some(Channel::Call),
+            words,
+        }
+    }
+
+    #[test]
+    fn a_phrase_spanning_two_voices_is_split_between_them() {
+        let call = diarization(vec![turn("S1", 0.0, 20.0), turn("S2", 20.0, 40.0)]);
+        let segments = [call_segment(vec![
+            word("Sounds", 18.0, 18.5),
+            word(" good.", 18.5, 19.0),
+            word(" Engineering", 20.2, 20.8),
+            word(" is", 20.8, 21.0),
+            word(" done.", 21.0, 21.5),
+        ])];
+        let relabeled = relabel(&segments, Channel::Call, &call, None);
+        let lines: Vec<(&str, &str)> = relabeled
+            .iter()
+            .map(|s| (s.speaker.as_deref().unwrap(), s.text.as_str()))
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                ("Speaker 1", "Sounds good."),
+                ("Speaker 2", "Engineering is done.")
+            ]
+        );
+        assert_eq!(relabeled[1].start, 20.2);
+    }
+
+    #[test]
+    fn one_stray_word_does_not_split_a_phrase() {
+        let call = diarization(vec![
+            turn("S1", 0.0, 20.0),
+            turn("S2", 20.0, 20.4),
+            turn("S1", 20.4, 40.0),
+        ]);
+        let segments = [call_segment(vec![
+            word("We", 19.5, 19.8),
+            word(" ship", 20.0, 20.3),
+            word(" Friday.", 20.5, 21.0),
+        ])];
+        let relabeled = relabel(&segments, Channel::Call, &call, None);
+        assert_eq!(relabeled.len(), 1);
+        assert_eq!(relabeled[0].speaker.as_deref(), Some("Speaker 1"));
+    }
+
+    #[test]
+    fn a_single_voice_keeps_the_channel_name() {
+        let call = diarization(vec![turn("S1", 0.0, 60.0)]);
+        let segments = [call_segment(vec![word("Hello", 1.0, 1.5)])];
+        let relabeled = relabel(&segments, Channel::Call, &call, None);
+        assert_eq!(relabeled[0].speaker.as_deref(), Some("Them"));
+    }
+
+    #[test]
+    fn your_voice_is_found_in_the_room_by_voiceprint() {
+        let room = diarization(vec![turn("S1", 0.0, 50.0), turn("S2", 50.0, 60.0)]);
+        let print = Voiceprint {
+            model: VOICEPRINT_MODEL.into(),
+            voice: vec![0.1, 0.9],
+            seconds: 120.0,
+        };
+        assert_eq!(find_you(&room, Some(&print)).as_deref(), Some("S2"));
+        assert_eq!(find_you(&room, None).as_deref(), Some("S1"));
+        let names = room.names(Some("S2"));
+        assert_eq!(names["S2"], "You");
+        assert_eq!(names["S1"], "Speaker 1");
+    }
+
+    #[test]
+    fn learning_blends_voices_by_how_long_each_was_heard() {
+        let first = learn(None, &[2.0, 0.0], 30.0);
+        assert_eq!(first.voice, [1.0, 0.0]);
+        let second = learn(Some(first), &[0.0, 1.0], 30.0);
+        assert!((second.voice[0] - second.voice[1]).abs() < 1e-6);
+        assert_eq!(second.seconds, 60.0);
+    }
+}

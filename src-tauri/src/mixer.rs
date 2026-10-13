@@ -3,6 +3,8 @@ use std::{collections::VecDeque, time::Duration};
 use cpal::StreamInstant;
 
 pub const OUTPUT_RATE: u32 = 48_000;
+pub const SPEECH_RATE: u32 = 16_000;
+const DECIMATION: usize = (OUTPUT_RATE / SPEECH_RATE) as usize;
 
 // How far one source may run ahead before the other is treated as silent.
 const MAX_LAG: usize = OUTPUT_RATE as usize / 2;
@@ -52,6 +54,26 @@ impl Resampler {
         }
         self.pos -= input.len() as f64;
         self.prev = input.last().copied().unwrap_or(prev);
+    }
+}
+
+#[derive(Default)]
+pub struct Decimator {
+    leftover: Vec<f32>,
+}
+
+impl Decimator {
+    pub fn push(&mut self, audio: &[f32]) -> Vec<f32> {
+        self.leftover.extend_from_slice(audio);
+        let whole = self.leftover.len() / DECIMATION * DECIMATION;
+        let out = self.leftover[..whole]
+            .as_chunks::<DECIMATION>()
+            .0
+            .iter()
+            .map(|frame| frame.iter().sum::<f32>() / DECIMATION as f32)
+            .collect();
+        self.leftover.drain(..whole);
+        out
     }
 }
 
@@ -236,6 +258,16 @@ mod tests {
         let out = play(&mut mixer, chunks(Source::Mic, 0.0, 10.0, 7.0), call);
         assert!((click(&out, 0) - click(&out, 1)).abs() <= 2);
         assert!((click(&out, 0) - 7 * OUTPUT_RATE as i64).abs() <= 2);
+    }
+
+    #[test]
+    fn decimating_uneven_chunks_loses_no_samples() {
+        let mut decimator = Decimator::default();
+        let total: usize = [1, 7, 480, 2, 1000]
+            .iter()
+            .map(|&n| decimator.push(&vec![0.5; n]).len())
+            .sum();
+        assert_eq!(total, (1 + 7 + 480 + 2 + 1000) / 3);
     }
 
     #[test]

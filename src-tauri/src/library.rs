@@ -8,7 +8,7 @@ use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 
-use crate::{err, recorder::Recorder, Result};
+use crate::{err, recorder::Recorder, tape, Result};
 
 const SCHEMA: &str = "
 PRAGMA journal_mode = WAL;
@@ -68,6 +68,8 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 ";
 
+const SEGMENT_DETAIL_COLUMNS: [(&str, &str); 2] = [("source", "TEXT"), ("words", "TEXT")];
+
 const MERGE_EDITS_MS: i64 = 5_000;
 
 pub fn now() -> i64 {
@@ -88,12 +90,23 @@ pub struct Recording {
     transcribed: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct Segment {
     pub speaker: Option<String>,
     pub start: f64,
     pub end: f64,
     pub text: String,
+    #[serde(skip)]
+    pub source: Option<tape::Channel>,
+    #[serde(skip)]
+    pub words: Vec<Word>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Word {
+    pub text: String,
+    pub start: Option<f64>,
+    pub end: Option<f64>,
 }
 
 #[derive(Serialize)]
@@ -119,7 +132,7 @@ impl Db {
         let dir = app.path().app_data_dir().map_err(err)?;
         std::fs::create_dir_all(&dir).map_err(err)?;
         let connection = Connection::open(dir.join("aube.db")).map_err(err)?;
-        connection.execute_batch(SCHEMA).map_err(err)?;
+        migrate(&connection).map_err(err)?;
         Ok(Self(Mutex::new(connection)))
     }
 
@@ -162,21 +175,52 @@ impl Db {
     pub fn add_segments(&self, id: &str, segments: &[Segment]) -> Result<()> {
         let mut connection = self.connection();
         let tx = connection.transaction().map_err(err)?;
-        for segment in segments {
-            tx.execute(
-                "INSERT INTO segments (recording_id, speaker, start_secs, end_secs, text)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![
-                    id,
-                    segment.speaker,
-                    segment.start,
-                    segment.end,
-                    segment.text
-                ],
+        insert_segments(&tx, id, segments).map_err(err)?;
+        tx.commit().map_err(err)
+    }
+
+    pub fn replace_segments(&self, id: &str, replacing: usize, segments: &[Segment]) -> Result<()> {
+        let mut connection = self.connection();
+        let tx = connection.transaction().map_err(err)?;
+        let removed = tx
+            .execute("DELETE FROM segments WHERE recording_id = ?1", [id])
+            .map_err(err)?;
+        if removed != replacing {
+            return Ok(());
+        }
+        insert_segments(&tx, id, segments).map_err(err)?;
+        tx.commit().map_err(err)
+    }
+
+    pub fn segments(&self, id: &str) -> Result<Vec<Segment>> {
+        let connection = self.connection();
+        let mut query = connection
+            .prepare(
+                "SELECT speaker, start_secs, end_secs, text,
+                    COALESCE(source, CASE speaker WHEN 'You' THEN 'mic' WHEN 'Them' THEN 'call' END),
+                    words
+                 FROM segments WHERE recording_id = ?1 ORDER BY start_secs",
             )
             .map_err(err)?;
-        }
-        tx.commit().map_err(err)
+        let segments = query
+            .query_map([id], |row| {
+                let source: Option<String> = row.get(4)?;
+                let words: Option<String> = row.get(5)?;
+                Ok(Segment {
+                    speaker: row.get(0)?,
+                    start: row.get(1)?,
+                    end: row.get(2)?,
+                    text: row.get(3)?,
+                    source: source.as_deref().and_then(tape::Channel::from_name),
+                    words: words
+                        .and_then(|words| serde_json::from_str(&words).ok())
+                        .unwrap_or_default(),
+                })
+            })
+            .map_err(err)?
+            .collect::<rusqlite::Result<_>>()
+            .map_err(err);
+        segments
     }
 
     pub fn setting(&self, key: &str) -> Option<String> {
@@ -280,6 +324,43 @@ impl Db {
     }
 }
 
+fn migrate(connection: &Connection) -> rusqlite::Result<()> {
+    connection.execute_batch(SCHEMA)?;
+    let existing: Vec<String> = connection
+        .prepare("SELECT name FROM pragma_table_info('segments')")?
+        .query_map([], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    for (column, kind) in SEGMENT_DETAIL_COLUMNS {
+        if !existing.iter().any(|name| name == column) {
+            connection
+                .execute_batch(&format!("ALTER TABLE segments ADD COLUMN {column} {kind}"))?;
+        }
+    }
+    Ok(())
+}
+
+fn insert_segments(tx: &Transaction, id: &str, segments: &[Segment]) -> rusqlite::Result<()> {
+    for segment in segments {
+        let words = (!segment.words.is_empty())
+            .then(|| serde_json::to_string(&segment.words).ok())
+            .flatten();
+        tx.execute(
+            "INSERT INTO segments (recording_id, speaker, start_secs, end_secs, text, source, words)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                id,
+                segment.speaker,
+                segment.start,
+                segment.end,
+                segment.text,
+                segment.source.map(tape::Channel::name),
+                words
+            ],
+        )?;
+    }
+    Ok(())
+}
+
 #[derive(PartialEq)]
 enum Edit {
     Create,
@@ -371,35 +452,19 @@ pub fn rename_recording(db: State<'_, Db>, id: String, title: String) -> Result<
 }
 
 #[tauri::command]
-pub fn delete_recording(db: State<'_, Db>, id: String) -> Result<()> {
+pub fn delete_recording(app: AppHandle, db: State<'_, Db>, id: String) -> Result<()> {
     db.connection()
-        .execute("DELETE FROM recordings WHERE id = ?1", [id])
-        .map(drop)
-        .map_err(err)
+        .execute("DELETE FROM recordings WHERE id = ?1", [&id])
+        .map_err(err)?;
+    tape::remove(&app, &id);
+    Ok(())
 }
 
 #[tauri::command]
 pub fn transcript(db: State<'_, Db>, id: String) -> Result<Transcript> {
-    let connection = db.connection();
-    let mut query = connection
-        .prepare(
-            "SELECT speaker, start_secs, end_secs, text FROM segments
-             WHERE recording_id = ?1 ORDER BY start_secs",
-        )
-        .map_err(err)?;
-    let segments = query
-        .query_map([id], |row| {
-            Ok(Segment {
-                speaker: row.get(0)?,
-                start: row.get(1)?,
-                end: row.get(2)?,
-                text: row.get(3)?,
-            })
-        })
-        .map_err(err)?
-        .collect::<rusqlite::Result<_>>()
-        .map_err(err)?;
-    Ok(Transcript { segments })
+    Ok(Transcript {
+        segments: db.segments(&id)?,
+    })
 }
 
 #[tauri::command]
@@ -460,6 +525,53 @@ pub fn save_note(
 mod tests {
     use super::*;
 
+    fn memory_db() -> Db {
+        let connection = Connection::open_in_memory().unwrap();
+        migrate(&connection).unwrap();
+        Db(Mutex::new(connection))
+    }
+
+    #[test]
+    fn segments_keep_their_channel_and_words() {
+        let db = memory_db();
+        db.create_recording("r", "Meeting", 0).unwrap();
+        let word = Word {
+            text: "hello".into(),
+            start: Some(1.0),
+            end: Some(1.4),
+        };
+        let segment = |speaker: &str, source| Segment {
+            speaker: Some(speaker.into()),
+            start: 1.0,
+            end: 1.4,
+            text: "hello".into(),
+            source,
+            words: vec![word.clone()],
+        };
+        db.add_segments("r", &[segment("Speaker 1", Some(tape::Channel::Call))])
+            .unwrap();
+        db.connection()
+            .execute(
+                "INSERT INTO segments (recording_id, speaker, start_secs, end_secs, text)
+                 VALUES ('r', 'You', 2, 3, 'older')",
+                [],
+            )
+            .unwrap();
+
+        let saved = db.segments("r").unwrap();
+        assert_eq!(saved[0].source, Some(tape::Channel::Call));
+        assert_eq!(saved[0].words, std::slice::from_ref(&word));
+        assert_eq!(saved[1].source, Some(tape::Channel::Mic));
+        assert!(saved[1].words.is_empty());
+
+        db.replace_segments("r", 1, &[segment("You", Some(tape::Channel::Mic))])
+            .unwrap();
+        assert_eq!(db.segments("r").unwrap().len(), 2);
+        db.replace_segments("r", 2, &[segment("You", Some(tape::Channel::Mic))])
+            .unwrap();
+        assert_eq!(db.segments("r").unwrap().len(), 1);
+    }
+
     fn line(id: &str, text: &str) -> Line {
         Line {
             id: id.into(),
@@ -483,9 +595,7 @@ mod tests {
 
     #[test]
     fn records_line_history() {
-        let connection = Connection::open_in_memory().unwrap();
-        connection.execute_batch(SCHEMA).unwrap();
-        let db = Db(Mutex::new(connection));
+        let db = memory_db();
         db.create_recording("r", "Meeting", 0).unwrap();
         let save = |lines: &[Line], secs| db.save_note("r", "{}", "", lines, secs).unwrap();
 

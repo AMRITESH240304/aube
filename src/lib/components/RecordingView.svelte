@@ -19,15 +19,24 @@
 
   const segments = $derived(transcript?.segments ?? []);
   const empty = $derived(error || (transcript ? "This recording doesn't have a transcript." : "Loading transcript…"));
+  const identifying = $derived(recorder.identifyingSpeakers.includes(recording.id));
 
-  onMount(async () => {
+  async function load() {
     try {
       transcript = await invoke<Transcript>("transcript", { id: recording.id });
-      await tick();
-      document.querySelector(`[data-start="${at}"]`)?.scrollIntoView({ block: "center" });
     } catch (e) {
       error = String(e);
     }
+  }
+
+  onMount(async () => {
+    await load();
+    await tick();
+    document.querySelector(`[data-start="${at}"]`)?.scrollIntoView({ block: "center" });
+  });
+
+  $effect(() => {
+    if (recorder.speakersIdentified[recording.id]) load();
   });
 
   async function run(action: () => Promise<unknown>) {
@@ -124,6 +133,12 @@
       <NoteEditor recordingId={recording.id} />
     </div>
   </div>
-  <TranscriptPanel lines={segments} highlight={at} {empty} actions={copyButton} />
+  <TranscriptPanel
+    lines={segments}
+    label={identifying ? "Working out who said what…" : ""}
+    highlight={at}
+    {empty}
+    actions={copyButton}
+  />
   <div class="h-20 shrink-0"></div>
 </div>
