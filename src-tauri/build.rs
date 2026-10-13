@@ -11,6 +11,8 @@ fn main() {
         }
     }
     build_sidecar();
+    build_diarizer();
+    fetch_speaker_models();
     fetch_language_model();
     tauri_build::build()
 }
@@ -82,4 +84,63 @@ fn build_sidecar() {
         .status()
         .expect("xcrun not found: install the Xcode command line tools");
     assert!(status.success(), "compiling stt/main.swift failed");
+}
+
+fn build_diarizer() {
+    println!("cargo:rerun-if-changed=diarizer/Package.swift");
+    println!("cargo:rerun-if-changed=diarizer/Sources");
+    let target = std::env::var("TARGET").unwrap();
+    let arch = target
+        .split('-')
+        .next()
+        .unwrap()
+        .replace("aarch64", "arm64");
+    let swift_build = |extra: &[&str]| {
+        std::process::Command::new("xcrun")
+            .args([
+                "swift",
+                "build",
+                "-c",
+                "release",
+                "--package-path",
+                "diarizer",
+                "--arch",
+            ])
+            .arg(&arch)
+            .args(extra)
+            .output()
+            .expect("xcrun not found: install the Xcode command line tools")
+    };
+    let built = swift_build(&[]);
+    assert!(
+        built.status.success(),
+        "building the diarizer failed:\n{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let bin = String::from_utf8(swift_build(&["--show-bin-path"]).stdout).unwrap();
+    std::fs::copy(
+        std::path::Path::new(bin.trim()).join("aube-diarizer"),
+        format!("binaries/aube-diarizer-{target}"),
+    )
+    .expect("copying the diarizer failed");
+}
+
+const SPEAKER_MODELS: &str = "models/diarizer";
+
+fn fetch_speaker_models() {
+    let marker = format!("{SPEAKER_MODELS}/speaker-diarization/.fluidaudio-revision");
+    println!("cargo:rerun-if-changed={marker}");
+    if std::path::Path::new(&marker).exists() {
+        return;
+    }
+    let target = std::env::var("TARGET").unwrap();
+    let output = std::process::Command::new(format!("binaries/aube-diarizer-{target}"))
+        .args(["--fetch", SPEAKER_MODELS])
+        .output()
+        .expect("running the diarizer failed");
+    assert!(
+        output.status.success(),
+        "downloading the speaker models failed:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
 }

@@ -3,7 +3,7 @@
 //
 // aube-stt [language]           transcribe, in the Mac's language unless one is given
 //   stdin:  mono 32-bit float PCM at 48 kHz, until EOF.
-//   stdout: one JSON object per line: {"start", "end", "text", "final"} or {"error"}.
+//   stdout: one JSON object per line: {"start", "end", "text", "final", "words"} or {"error"}.
 // aube-stt --languages          print [{"id", "name", "installed"}] as JSON
 // aube-stt --install language   download a language's model ahead of time
 
@@ -116,14 +116,29 @@ Thread.detachNewThread {
     feed.finish()
 }
 
+func words(_ text: AttributedString) -> [[String: Any]] {
+    text.runs.map { run in
+        var word: [String: Any] = ["text": String(text[run.range].characters)]
+        if let range = run.audioTimeRange {
+            word["start"] = seconds(range.start)
+            word["end"] = seconds(range.end)
+        }
+        return word
+    }
+}
+
 let results = Task {
     for try await result in transcriber.results {
-        emit([
+        var event: [String: Any] = [
             "start": seconds(result.range.start),
             "end": seconds(result.range.end),
             "text": String(result.text.characters),
             "final": result.isFinal,
-        ])
+        ]
+        if result.isFinal {
+            event["words"] = words(result.text)
+        }
+        emit(event)
     }
 }
 

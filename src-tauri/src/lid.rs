@@ -2,8 +2,8 @@ use std::sync::OnceLock;
 
 use tract_onnx::prelude::*;
 
-pub const RATE: usize = 16_000;
-const MIN_CONFIDENCE: f32 = 0.5;
+pub const RATE: usize = crate::mixer::SPEECH_RATE as usize;
+
 const LOGITS: &str = "/clf/out/w/Add";
 
 static MODEL: &[u8] = include_bytes!("../models/lid-ecapa-voxlingua107.int8.onnx");
@@ -12,6 +12,11 @@ static LABELS: &str = include_str!("../models/lid-labels.txt");
 pub struct Detector {
     model: Arc<TypedRunnableModel>,
     labels: Vec<&'static str>,
+}
+
+pub struct Guess {
+    pub code: &'static str,
+    pub confidence: f32,
 }
 
 pub fn detector() -> Option<&'static Detector> {
@@ -41,7 +46,7 @@ impl Detector {
         })
     }
 
-    pub fn detect(&self, speech: &[f32], candidates: &[&str]) -> Option<&'static str> {
+    pub fn detect(&self, speech: &[f32], candidates: &[&str]) -> Option<Guess> {
         let input =
             tract_ndarray::Array2::from_shape_vec((1, speech.len()), speech.to_vec()).ok()?;
         let output = self.model.run(tvec!(input.into_tensor().into())).ok()?;
@@ -53,15 +58,11 @@ impl Detector {
             .filter(|(label, _)| candidates.contains(label))
             .map(|(label, score)| (*label, *score))
             .collect();
-        let (best, top) = allowed.iter().copied().max_by(|a, b| a.1.total_cmp(&b.1))?;
+        let (code, top) = allowed.iter().copied().max_by(|a, b| a.1.total_cmp(&b.1))?;
         let total: f32 = allowed.iter().map(|(_, score)| (score - top).exp()).sum();
-        (1.0 / total >= MIN_CONFIDENCE).then_some(best)
+        Some(Guess {
+            code,
+            confidence: 1.0 / total,
+        })
     }
-}
-
-pub fn downsample(audio: &[f32], from: usize) -> impl Iterator<Item = f32> + '_ {
-    let factor = from / RATE;
-    audio
-        .chunks_exact(factor)
-        .map(move |frame| frame.iter().sum::<f32>() / factor as f32)
 }

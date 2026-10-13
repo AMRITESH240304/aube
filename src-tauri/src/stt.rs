@@ -5,7 +5,6 @@
 use std::{
     collections::{HashMap, VecDeque},
     io::{BufRead, BufReader, Write},
-    path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed},
@@ -16,20 +15,34 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::json;
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::{echo::Echo, err, lid, mixer::OUTPUT_RATE, transcripts::transcript_path, Result};
+use crate::{
+    echo::Echo,
+    err,
+    library::{Db, Segment, Word},
+    lid,
+    mixer::{Decimator, OUTPUT_RATE},
+    tape::{Audio, Channel, Tape},
+    Result,
+};
 
 // Frames arrive as [mic, call], matching this order.
-const SPEAKERS: [&str; 2] = ["You", "Them"];
+const SPEAKERS: [(&str, Channel); 2] = [("You", Channel::Mic), ("Them", Channel::Call)];
 
 const AUTO: &str = "auto";
-const CHECK_EVERY: usize = 4 * lid::RATE;
-const SPEECH_WINDOW: usize = 8 * lid::RATE;
-const REWIND: usize = 8 * OUTPUT_RATE as usize;
-const QUIET: f32 = 0.02;
-const GUESSES: &str = "detected-languages.json";
+const GUESSES: &str = "detected-languages";
+
+const SPEECH_BEFORE_LOCKING: usize = 30 * lid::RATE;
+const SPEECH_WORTH_REMEMBERING: usize = 10 * lid::RATE;
+const LOCK_CONFIDENCE: f32 = 0.6;
+const REWIND: usize = 120 * OUTPUT_RATE as usize;
+
+const VAD_FRAME: usize = lid::RATE * 30 / 1000;
+const VAD_MIN_LEVEL: f32 = 0.005;
+const VAD_ABOVE_FLOOR: f32 = 3.0;
+const VAD_FLOOR_RISE: f32 = 0.001;
 
 #[derive(Deserialize)]
 #[serde(untagged)]
@@ -40,23 +53,27 @@ enum Event {
         text: String,
         #[serde(rename = "final")]
         is_final: bool,
+        #[serde(default)]
+        words: Vec<Word>,
     },
     Error {
         error: String,
     },
 }
 
-#[derive(Default)]
 struct Turn {
     speaker: &'static str,
+    channel: Channel,
     stream: usize,
     start: f64,
     end: f64,
     text: String,
+    words: Vec<Word>,
 }
 
 struct Origin {
     speaker: &'static str,
+    channel: Channel,
     stream: usize,
     offset: f64,
     alive: Arc<AtomicBool>,
@@ -70,23 +87,31 @@ struct Live {
     error: Mutex<Option<String>>,
     streams: AtomicUsize,
     guesses: Mutex<HashMap<String, String>>,
-    guesses_path: Option<PathBuf>,
 }
 
 impl Live {
     // `pending` is the speaker's phrase still being heard; a final result settles it.
     fn handle(&self, origin: &Origin, pending: &mut Option<usize>, event: Event) {
-        let (start, end, text, is_final) = match event {
+        let (start, end, text, is_final, words) = match event {
             Event::Text {
                 start,
                 end,
                 text,
                 is_final,
+                words,
             } => (
                 start + origin.offset,
                 end + origin.offset,
                 text.trim().to_string(),
                 is_final,
+                words
+                    .into_iter()
+                    .map(|word| Word {
+                        start: word.start.map(|s| s + origin.offset),
+                        end: word.end.map(|e| e + origin.offset),
+                        text: word.text,
+                    })
+                    .collect(),
             ),
             Event::Error { error } => {
                 *self.error.lock().unwrap() = Some(error);
@@ -97,21 +122,23 @@ impl Live {
         if !origin.alive.load(Relaxed) {
             return;
         }
-        let index = *pending.get_or_insert_with(|| {
-            turns.push(Turn::default());
-            turns.len() - 1
-        });
+        let index = pending.unwrap_or(turns.len());
         self.emit_text(index, origin.speaker, start, &text);
-        turns[index] = Turn {
+        let turn = Turn {
             speaker: origin.speaker,
+            channel: origin.channel,
             stream: origin.stream,
             start,
             end,
             text,
+            words,
         };
-        if is_final {
-            *pending = None;
+        if index == turns.len() {
+            turns.push(turn);
+        } else {
+            turns[index] = turn;
         }
+        *pending = (!is_final).then_some(index);
     }
 
     fn emit_text(&self, index: usize, speaker: &str, start: f64, text: &str) {
@@ -126,15 +153,16 @@ impl Live {
         for (index, turn) in turns.iter_mut().enumerate() {
             if turn.stream == stream && turn.start >= from && !turn.text.is_empty() {
                 turn.text.clear();
+                turn.words.clear();
                 self.emit_text(index, turn.speaker, turn.start, "");
             }
         }
     }
 
-    fn detected(&self, speaker: &str, language: &Language) {
+    fn locked(&self, speaker: &str, language: Option<&Language>) {
         let _ = self.app.emit(
             "live-language",
-            json!({ "recordingId": self.id, "speaker": speaker, "language": language.name }),
+            json!({ "recordingId": self.id, "speaker": speaker, "language": language.map(|l| &l.name) }),
         );
     }
 
@@ -142,11 +170,11 @@ impl Live {
         self.guesses.lock().unwrap().get(speaker).cloned()
     }
 
-    fn remember(&self, speaker: &str, language: &Language) {
+    fn remember(&self, speaker: &str, language: &str) {
         let mut guesses = self.guesses.lock().unwrap();
-        guesses.insert(speaker.to_owned(), language.id.clone());
-        if let (Some(path), Ok(bytes)) = (&self.guesses_path, serde_json::to_vec(&*guesses)) {
-            let _ = std::fs::write(path, bytes);
+        guesses.insert(speaker.to_owned(), language.to_owned());
+        if let Ok(value) = serde_json::to_string(&*guesses) {
+            let _ = self.app.state::<Db>().set_setting(GUESSES, &value);
         }
     }
 }
@@ -179,6 +207,7 @@ fn sidecar() -> Result<Command> {
 fn spawn(
     live: &Arc<Live>,
     speaker: &'static str,
+    channel: Channel,
     language: Option<&str>,
     offset: f64,
 ) -> Result<Stream> {
@@ -206,6 +235,7 @@ fn spawn(
     let alive = Arc::new(AtomicBool::new(true));
     let origin = Origin {
         speaker,
+        channel,
         stream: live.streams.fetch_add(1, Relaxed),
         offset,
         alive: alive.clone(),
@@ -232,101 +262,137 @@ fn spawn(
     })
 }
 
-#[derive(Default)]
-struct Listening {
-    recent: VecDeque<f32>,
-    speech: VecDeque<f32>,
-    since_check: usize,
-    confirmed: bool,
-    candidate: Option<String>,
+struct Vad {
+    floor: f32,
 }
 
-impl Listening {
-    fn hear(&mut self, audio: &[f32]) {
-        self.recent.extend(audio);
-        let excess = self.recent.len().saturating_sub(REWIND);
-        self.recent.drain(..excess);
-        if audio.iter().any(|s| s.abs() > QUIET) {
-            let before = self.speech.len();
-            self.speech
-                .extend(lid::downsample(audio, OUTPUT_RATE as usize));
-            self.since_check += self.speech.len() - before;
-            let excess = self.speech.len().saturating_sub(SPEECH_WINDOW);
-            self.speech.drain(..excess);
+impl Default for Vad {
+    fn default() -> Self {
+        Self {
+            floor: VAD_MIN_LEVEL,
         }
+    }
+}
+
+impl Vad {
+    fn voiced(&mut self, frame: &[f32]) -> bool {
+        let level = (frame.iter().map(|s| s * s).sum::<f32>() / frame.len() as f32).sqrt();
+        self.floor = if level < self.floor {
+            level
+        } else {
+            self.floor + (level - self.floor) * VAD_FLOOR_RISE
+        };
+        level > (self.floor * VAD_ABOVE_FLOOR).max(VAD_MIN_LEVEL)
+    }
+}
+
+#[derive(Default)]
+struct Detection {
+    rewind: VecDeque<f32>,
+    decimator: Decimator,
+    unframed: Vec<f32>,
+    speech: Vec<f32>,
+    vad: Vad,
+}
+
+impl Detection {
+    fn hear(&mut self, audio: &[f32]) {
+        self.rewind.extend(audio);
+        let excess = self.rewind.len().saturating_sub(REWIND);
+        self.rewind.drain(..excess);
+
+        self.unframed.extend(self.decimator.push(audio));
+        let whole = self.unframed.len() / VAD_FRAME * VAD_FRAME;
+        for frame in self.unframed[..whole].as_chunks::<VAD_FRAME>().0 {
+            if self.vad.voiced(frame) {
+                self.speech.extend_from_slice(frame);
+            }
+        }
+        self.unframed.drain(..whole);
+    }
+
+    fn ready(&self) -> bool {
+        self.speech.len() >= SPEECH_BEFORE_LOCKING
     }
 }
 
 struct Speaker {
     name: &'static str,
+    channel: Channel,
     stream: Option<Stream>,
+    tape: Option<Tape>,
     language: Option<String>,
     heard: usize,
-    listening: Option<Listening>,
+    detection: Option<Detection>,
 }
 
 impl Speaker {
     fn push(&mut self, audio: Vec<f32>, live: &Arc<Live>, languages: &[Language]) {
         self.heard += audio.len();
-        let due = self.listening.as_mut().is_some_and(|listening| {
-            listening.hear(&audio);
-            listening.since_check >= CHECK_EVERY
+        if let Some(tape) = &mut self.tape {
+            if tape.write(&audio).is_err() {
+                self.tape = None;
+            }
+        }
+        let ready = self.detection.as_mut().is_some_and(|detection| {
+            detection.hear(&audio);
+            detection.ready()
         });
         if let Some(stream) = &self.stream {
             let _ = stream.audio.send(audio);
         }
-        if due {
-            self.check(live, languages);
+        if ready {
+            self.lock(live, languages);
         }
     }
 
-    fn check(&mut self, live: &Arc<Live>, languages: &[Language]) {
-        let Some(listening) = &mut self.listening else {
+    fn lock(&mut self, live: &Arc<Live>, languages: &[Language]) {
+        let Some(detection) = self.detection.take() else {
             return;
         };
-        listening.since_check = 0;
-        let found = detect(listening.speech.make_contiguous(), languages);
-        let Some(found) = found else {
-            listening.candidate = None;
-            return;
-        };
-        if covers(self.language.as_deref(), found) {
-            if !listening.confirmed {
-                live.detected(self.name, found);
+        if let Some(found) = confident(&detection.speech, languages) {
+            if !covers(self.language.as_deref(), found) {
+                self.switch(live, found, detection.rewind);
             }
-            listening.confirmed = true;
-            listening.candidate = None;
-            return;
+            if let Some(language) = &self.language {
+                live.remember(self.name, language);
+            }
         }
-        if listening.confirmed && listening.candidate.as_deref() != Some(&found.id) {
-            listening.candidate = Some(found.id.clone());
-            return;
-        }
-        self.switch(live, found);
+        let current = self
+            .language
+            .as_deref()
+            .and_then(|id| languages.iter().find(|l| l.id == id));
+        live.locked(self.name, current);
     }
 
-    fn switch(&mut self, live: &Arc<Live>, language: &Language) {
-        let Some(listening) = &mut self.listening else {
-            return;
-        };
-        let rewind: Vec<f32> = listening.recent.iter().copied().collect();
+    fn switch(&mut self, live: &Arc<Live>, language: &Language, rewind: VecDeque<f32>) {
         let from = (self.heard - rewind.len()) as f64 / OUTPUT_RATE as f64;
-        listening.confirmed = true;
-        listening.candidate = None;
         if let Some(old) = self.stream.take() {
             let id = old.id;
             old.stop();
             live.cut(id, from);
         }
-        live.detected(self.name, language);
-        live.remember(self.name, language);
         self.language = Some(language.id.clone());
-        match spawn(live, self.name, Some(&language.id), from) {
+        match spawn(live, self.name, self.channel, Some(&language.id), from) {
             Ok(stream) => {
-                let _ = stream.audio.send(rewind);
+                let _ = stream.audio.send(rewind.into());
                 self.stream = Some(stream);
             }
             Err(e) => *live.error.lock().unwrap() = Some(e),
+        }
+    }
+
+    fn remember_unlocked(&mut self, live: &Live, languages: &[Language]) {
+        let Some(detection) = self.detection.take() else {
+            return;
+        };
+        if detection.speech.len() < SPEECH_WORTH_REMEMBERING {
+            return;
+        }
+        if let Some(found) = confident(&detection.speech, languages) {
+            if !covers(self.language.as_deref(), found) {
+                live.remember(self.name, &found.id);
+            }
         }
     }
 }
@@ -336,18 +402,19 @@ fn covers(current: Option<&str>, found: &Language) -> bool {
     current == Some(found.code()) || (current == Some("hi") && found.code() == "en")
 }
 
-fn detect<'a>(speech: &[f32], languages: &'a [Language]) -> Option<&'a Language> {
-    if speech.len() < lid::RATE {
+fn confident<'a>(speech: &[f32], languages: &'a [Language]) -> Option<&'a Language> {
+    let codes: Vec<&str> = languages.iter().map(Language::code).collect();
+    let guess = lid::detector()?.detect(speech, &codes)?;
+    if guess.confidence < LOCK_CONFIDENCE {
         return None;
     }
-    let codes: Vec<&str> = languages.iter().map(Language::code).collect();
-    let code = lid::detector()?.detect(speech, &codes)?;
-    languages.iter().find(|l| l.code() == code)
+    languages.iter().find(|l| l.code() == guess.code)
 }
 
-fn saved_guesses(path: Option<&Path>) -> HashMap<String, String> {
-    path.and_then(|path| std::fs::read(path).ok())
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+fn saved_guesses(app: &AppHandle) -> HashMap<String, String> {
+    app.state::<Db>()
+        .setting(GUESSES)
+        .and_then(|value| serde_json::from_str(&value).ok())
         .unwrap_or_default()
 }
 
@@ -372,21 +439,19 @@ impl Transcriber {
         } else {
             Vec::new()
         };
-        let listen = !languages.is_empty();
-        let guesses_path = app.path().app_data_dir().ok().map(|dir| dir.join(GUESSES));
+        let detect = !languages.is_empty();
         let live = Arc::new(Live {
-            app,
-            id,
+            guesses: Mutex::new(saved_guesses(&app)),
+            app: app.clone(),
+            id: id.clone(),
             turns: Mutex::default(),
             error: Mutex::default(),
             streams: AtomicUsize::new(0),
-            guesses: Mutex::new(saved_guesses(guesses_path.as_deref())),
-            guesses_path,
         });
         let speakers = SPEAKERS
             .into_iter()
-            .map(|name| {
-                let language = if listen {
+            .map(|(name, channel)| {
+                let language = if detect {
                     live.guess(name)
                 } else {
                     language.clone().filter(|_| !auto)
@@ -394,10 +459,15 @@ impl Transcriber {
                 let offset = recorded as f64 / OUTPUT_RATE as f64;
                 Ok(Speaker {
                     name,
-                    stream: Some(spawn(&live, name, language.as_deref(), offset)?),
+                    channel,
+                    stream: Some(spawn(&live, name, channel, language.as_deref(), offset)?),
+                    tape: Audio::of(&app)
+                        .and_then(|audio| audio.tape(&id, channel, recorded))
+                        .inspect_err(|e| eprintln!("not keeping {} audio: {e}", channel.name()))
+                        .ok(),
                     language,
                     heard: recorded,
-                    listening: listen.then(Listening::default),
+                    detection: detect.then(Detection::default),
                 })
             })
             .collect::<Result<_>>()?;
@@ -424,12 +494,17 @@ impl Transcriber {
         self.live.error.lock().unwrap().clone()
     }
 
-    // Lets each sidecar finish what it heard, then saves `<id>.transcript.json`.
-    pub fn finish(self, dir: &Path) -> Result<()> {
+    pub fn finish(mut self) -> Result<()> {
         let mut children = Vec::new();
-        for stream in self.speakers.into_iter().filter_map(|s| s.stream) {
-            drop(stream.audio);
-            children.push((stream.child, stream.threads));
+        for speaker in &mut self.speakers {
+            speaker.remember_unlocked(&self.live, &self.languages);
+            if let Some(tape) = speaker.tape.take() {
+                let _ = tape.close();
+            }
+            if let Some(stream) = speaker.stream.take() {
+                drop(stream.audio);
+                children.push((stream.child, stream.threads));
+            }
         }
         let deadline = Instant::now() + Duration::from_secs(15);
         for (mut child, threads) in children {
@@ -445,44 +520,25 @@ impl Transcriber {
             }
         }
 
-        let path = transcript_path(dir, &self.live.id);
         let mut turns = self.live.turns.lock().unwrap();
-        turns.retain(|t| !t.text.is_empty());
         turns.sort_by(|a, b| a.start.total_cmp(&b.start));
-        let mut segments = saved_segments(&path);
-        segments.extend(turns.iter().map(
-            |t| json!({ "start": t.start, "end": t.end, "speaker": t.speaker, "text": t.text }),
-        ));
-        let text = segments
-            .iter()
-            .filter_map(|segment| {
-                let text = segment["text"].as_str()?;
-                Some(match segment["speaker"].as_str() {
-                    Some(speaker) => format!("{speaker}: {text}"),
-                    None => text.to_owned(),
-                })
+        let segments: Vec<Segment> = turns
+            .drain(..)
+            .filter(|turn| !turn.text.is_empty())
+            .map(|turn| Segment {
+                speaker: Some(turn.speaker.to_owned()),
+                start: turn.start,
+                end: turn.end,
+                text: turn.text,
+                source: Some(turn.channel),
+                words: turn.words,
             })
-            .collect::<Vec<_>>()
-            .join("\n\n");
-        let transcript = json!({
-            "text": text,
-            "speech_detected": !segments.is_empty(),
-            "segments": segments,
-        });
-        let bytes = serde_json::to_vec_pretty(&transcript).map_err(err)?;
-        std::fs::write(path, bytes).map_err(err)
+            .collect();
+        self.live
+            .app
+            .state::<Db>()
+            .add_segments(&self.live.id, &segments)
     }
-}
-
-fn saved_segments(path: &Path) -> Vec<Value> {
-    std::fs::read(path)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-        .and_then(|mut transcript| match transcript["segments"].take() {
-            Value::Array(segments) => Some(segments),
-            _ => None,
-        })
-        .unwrap_or_default()
 }
 
 #[derive(Serialize, Deserialize)]
@@ -516,5 +572,75 @@ pub fn install_language(id: String) -> Result<()> {
         _ if output.status.success() => Ok(()),
         Ok(Event::Error { error }) => Err(error),
         _ => Err(format!("Couldn't download {id}.")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tone(level: f32, frames: usize) -> Vec<f32> {
+        (0..frames * VAD_FRAME)
+            .map(|i| level * (i as f32 * 0.3).sin())
+            .collect()
+    }
+
+    #[test]
+    fn vad_keeps_speech_over_steady_background_noise() {
+        let mut vad = Vad::default();
+        let noise = tone(0.01, 200);
+        let noisy = noise
+            .as_chunks::<VAD_FRAME>()
+            .0
+            .iter()
+            .filter(|frame| vad.voiced(&frame[..]))
+            .count();
+        let speech = tone(0.2, 20);
+        let voiced = speech
+            .as_chunks::<VAD_FRAME>()
+            .0
+            .iter()
+            .filter(|frame| vad.voiced(&frame[..]))
+            .count();
+        assert!(noisy < 5, "{noisy} noise frames counted as speech");
+        assert_eq!(voiced, 20);
+    }
+
+    #[test]
+    fn detection_needs_thirty_seconds_of_speech_not_of_time() {
+        let mut detection = Detection::default();
+        detection.hear(&vec![0.0; 60 * OUTPUT_RATE as usize]);
+        assert!(!detection.ready());
+        let syllable = OUTPUT_RATE as usize / 5;
+        let pause = OUTPUT_RATE as usize / 10;
+        let speech: Vec<f32> = (0..50 * OUTPUT_RATE as usize)
+            .map(|i| {
+                let speaking = i % (syllable + pause) < syllable;
+                if speaking {
+                    0.2 * (i as f32 * 0.1).sin()
+                } else {
+                    0.0
+                }
+            })
+            .collect();
+        detection.hear(&speech);
+        assert!(detection.ready());
+        assert!(detection.rewind.len() <= REWIND);
+    }
+
+    fn language(id: &str) -> Language {
+        Language {
+            id: id.into(),
+            name: id.into(),
+            installed: true,
+        }
+    }
+
+    #[test]
+    fn hindi_covers_english_but_not_the_other_way() {
+        assert!(covers(Some("hi-IN"), &language("en-US")));
+        assert!(covers(Some("en-IN"), &language("en-US")));
+        assert!(!covers(Some("en-US"), &language("hi-IN")));
+        assert!(!covers(None, &language("en-US")));
     }
 }

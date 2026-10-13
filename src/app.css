@@ -17,3 +17,42 @@
 @utility btn-primary {
   @apply btn border-transparent bg-zinc-900 text-white hover:bg-zinc-700 dark:bg-white dark:text-zinc-900 dark:hover:bg-zinc-200;
 }
+
+@layer components {
+  .note {
+    @apply min-h-[40vh] leading-relaxed outline-none;
+  }
+  .note h1 {
+    @apply mt-6 mb-2 text-2xl font-semibold;
+  }
+  .note h2 {
+    @apply mt-5 mb-2 text-xl font-semibold;
+  }
+  .note h3 {
+    @apply mt-4 mb-1 text-lg font-semibold;
+  }
+  .note p {
+    @apply my-1.5;
+  }
+  .note ul {
+    @apply my-1.5 list-disc pl-6;
+  }
+  .note ol {
+    @apply my-1.5 list-decimal pl-6;
+  }
+  .note blockquote {
+    @apply my-2 border-l-2 border-zinc-300 pl-3 text-zinc-600 dark:border-zinc-700 dark:text-zinc-400;
+  }
+  .note code {
+    @apply rounded bg-zinc-100 px-1 text-sm dark:bg-zinc-800;
+  }
+  .note pre {
+    @apply my-2 rounded-lg bg-zinc-100 p-3 text-sm dark:bg-zinc-900;
+  }
+  .note pre code {
+    @apply bg-transparent p-0;
+  }
+  .note .is-editor-empty:first-child::before {
+    @apply pointer-events-none float-left h-0 text-zinc-400 content-[attr(data-placeholder)];
+  }
+}
