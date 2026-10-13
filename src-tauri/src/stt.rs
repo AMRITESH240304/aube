@@ -24,7 +24,7 @@ use crate::{
     library::{Db, Segment, Word},
     lid,
     mixer::{Decimator, OUTPUT_RATE},
-    tape::{Channel, Tape},
+    tape::{Audio, Channel, Tape},
     Result,
 };
 
@@ -461,7 +461,8 @@ impl Transcriber {
                     name,
                     channel,
                     stream: Some(spawn(&live, name, channel, language.as_deref(), offset)?),
-                    tape: Tape::open(&app, &id, channel, recorded)
+                    tape: Audio::of(&app)
+                        .and_then(|audio| audio.tape(&id, channel, recorded))
                         .inspect_err(|e| eprintln!("not keeping {} audio: {e}", channel.name()))
                         .ok(),
                     language,

@@ -23,6 +23,7 @@ pub fn run() {
         .manage(recorder::Recorder::default())
         .setup(|app| {
             app.manage(library::Db::open(app.handle())?);
+            speakers::identify_waiting(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

@@ -7,7 +7,8 @@ use tauri::{path::BaseDirectory, AppHandle, Emitter, Manager};
 use crate::{
     err,
     library::{Db, Segment, Word},
-    tape::{self, Channel},
+    recorder::Recorder,
+    tape::{Audio, Channel},
     Result,
 };
 
@@ -24,6 +25,10 @@ const ENROLL_LEAST_SPEECH: f64 = 20.0;
 const ENROLL_DOMINANT_SHARE: f64 = 0.8;
 const ENROLL_ENOUGH_SPEECH: f64 = 600.0;
 const SELF_MATCH: f32 = 0.5;
+const SAME_VOICE: f32 = 0.5;
+const MOST_ATTEMPTS: u32 = 3;
+
+type Voices = [(String, Vec<f32>)];
 
 static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
 
@@ -79,17 +84,47 @@ impl Diarization {
             .max_by(|a, b| a.1.total_cmp(&b.1))
     }
 
-    fn names(&self, you: Option<&str>) -> HashMap<String, String> {
+    fn distinct(&self) -> bool {
+        self.speech_by_speaker().len() >= 2 && self.total_speech() >= LEAST_DIARIZED_SPEECH
+    }
+
+    fn names(&self, you: Option<&str>, known: &Voices) -> HashMap<String, String> {
+        let distinct = self.distinct();
         let mut names = HashMap::new();
-        let mut others = 0;
-        for (speaker, _) in self.speech_by_speaker() {
-            let name = if Some(speaker) == you {
-                "You".to_owned()
-            } else {
-                others += 1;
-                format!("Speaker {others}")
-            };
-            names.insert(speaker.to_owned(), name);
+        if !distinct && known.is_empty() {
+            return names;
+        }
+        if let Some(you) = you {
+            names.insert(you.to_owned(), "You".to_owned());
+        }
+        let mut pairs: Vec<(f32, &str, &str)> = self
+            .voices
+            .iter()
+            .flat_map(|(speaker, voice)| {
+                known.iter().map(move |(name, old)| {
+                    (similarity(voice, old), speaker.as_str(), name.as_str())
+                })
+            })
+            .filter(|(score, _, _)| *score >= SAME_VOICE)
+            .collect();
+        pairs.sort_by(|a, b| b.0.total_cmp(&a.0));
+        for (_, speaker, name) in pairs {
+            if !names.contains_key(speaker) && !names.values().any(|taken| taken == name) {
+                names.insert(speaker.to_owned(), name.to_owned());
+            }
+        }
+        if distinct {
+            let mut last = known
+                .iter()
+                .filter_map(|(name, _)| name.strip_prefix("Speaker ")?.parse::<u32>().ok())
+                .max()
+                .unwrap_or(0);
+            for (speaker, _) in self.speech_by_speaker() {
+                if !names.contains_key(speaker) {
+                    last += 1;
+                    names.insert(speaker.to_owned(), format!("Speaker {last}"));
+                }
+            }
         }
         names
     }
@@ -99,11 +134,39 @@ pub fn identify(app: AppHandle, recording: String) {
     thread::spawn(move || {
         let _one_at_a_time = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
         announce(&app, &recording, true);
-        if let Err(e) = relabel_recording(&app, &recording) {
-            eprintln!("couldn't tell speakers apart in {recording}: {e}");
+        let finished = match relabel_recording(&app, &recording) {
+            Ok(()) => true,
+            Err(e) => {
+                eprintln!("couldn't tell speakers apart in {recording}: {e}");
+                give_up(&app, &recording)
+            }
+        };
+        let recording_now = app.state::<Recorder>().elapsed(&recording).is_some();
+        if finished && !recording_now {
+            if let Ok(audio) = Audio::of(&app) {
+                audio.remove(&recording);
+            }
         }
         announce(&app, &recording, false);
     });
+}
+
+pub fn identify_waiting(app: &AppHandle) {
+    let waiting = Audio::of(app)
+        .map(|audio| audio.waiting())
+        .unwrap_or_default();
+    for recording in waiting {
+        identify(app.clone(), recording);
+    }
+}
+
+fn give_up(app: &AppHandle, recording: &str) -> bool {
+    let Ok(audio) = Audio::of(app) else {
+        return true;
+    };
+    let mut pending = audio.pending(recording).unwrap_or_default();
+    pending.attempts += 1;
+    pending.attempts >= MOST_ATTEMPTS || audio.set_pending(recording, pending).is_err()
 }
 
 fn announce(app: &AppHandle, recording: &str, working: bool) {
@@ -114,47 +177,58 @@ fn announce(app: &AppHandle, recording: &str, working: bool) {
 }
 
 fn relabel_recording(app: &AppHandle, recording: &str) -> Result<()> {
+    let from = Audio::of(app)?
+        .pending(recording)
+        .unwrap_or_default()
+        .start_secs();
     let db = app.state::<Db>();
     let segments = db.segments(recording)?;
     let speech = |channel| -> f64 {
         segments
             .iter()
-            .filter(|s| s.source == Some(channel))
+            .filter(|s| s.source == Some(channel) && s.start >= from)
             .map(|s| s.end - s.start)
             .sum()
     };
     let (mic, call) = (speech(Channel::Mic), speech(Channel::Call));
-    let relabeled = if call >= CALL_SPEECH_FOR_ONLINE {
+    let (channel, diarization, you) = if call >= CALL_SPEECH_FOR_ONLINE {
         if mic >= ENROLL_LEAST_SPEECH {
-            if let Err(e) = enroll(app, recording) {
+            if let Err(e) = enroll(app, recording, from) {
                 eprintln!("couldn't learn your voice from {recording}: {e}");
             }
         }
-        let call = diarize(app, recording, Channel::Call)?;
-        relabel(&segments, Channel::Call, &call, None)
+        (
+            Channel::Call,
+            diarize(app, recording, Channel::Call, from)?,
+            None,
+        )
     } else if mic >= MIC_SPEECH_FOR_IN_PERSON && call <= MOST_CALL_SPEECH_IN_PERSON {
-        let room = diarize(app, recording, Channel::Mic)?;
+        let room = diarize(app, recording, Channel::Mic, from)?;
         let you = find_you(&room, voiceprint(app).as_ref());
-        relabel(&segments, Channel::Mic, &room, you.as_deref())
+        (Channel::Mic, room, you)
     } else {
         return Ok(());
     };
-    db.replace_segments(recording, segments.len(), &relabeled)
+    let known = db.voices(recording, channel)?;
+    let names = diarization.names(you.as_deref(), &known);
+    let relabeled = relabel(&segments, channel, &diarization, &names, from);
+    db.replace_segments(recording, segments.len(), &relabeled)?;
+    let voices: Vec<(String, Vec<f32>)> = names
+        .iter()
+        .filter_map(|(speaker, name)| {
+            Some((name.clone(), diarization.voices.get(speaker)?.clone()))
+        })
+        .collect();
+    db.add_voices(recording, channel, &voices)
 }
 
 fn relabel(
     segments: &[Segment],
     channel: Channel,
     diarization: &Diarization,
-    you: Option<&str>,
+    names: &HashMap<String, String>,
+    from: f64,
 ) -> Vec<Segment> {
-    let distinct = diarization.speech_by_speaker().len() >= 2
-        && diarization.total_speech() >= LEAST_DIARIZED_SPEECH;
-    let names = if distinct {
-        diarization.names(you)
-    } else {
-        HashMap::new()
-    };
     let fallback = match channel {
         Channel::Mic => "You",
         Channel::Call => "Them",
@@ -162,8 +236,8 @@ fn relabel(
     segments
         .iter()
         .flat_map(|segment| {
-            if segment.source == Some(channel) {
-                split(segment, &diarization.segments, &names, fallback)
+            if segment.source == Some(channel) && segment.start >= from {
+                split(segment, &diarization.segments, names, fallback)
             } else {
                 vec![segment.clone()]
             }
@@ -279,8 +353,8 @@ fn smooth_single_words(speakers: &mut [Option<&str>]) {
     }
 }
 
-fn diarize(app: &AppHandle, recording: &str, channel: Channel) -> Result<Diarization> {
-    let audio = tape::path(app, recording, channel)?;
+fn diarize(app: &AppHandle, recording: &str, channel: Channel, from: f64) -> Result<Diarization> {
+    let audio = Audio::of(app)?.path(recording, channel);
     if !audio.exists() {
         return Err(format!("no {} audio was kept", channel.name()));
     }
@@ -303,6 +377,10 @@ fn diarize(app: &AppHandle, recording: &str, channel: Channel) -> Result<Diariza
             diarization
                 .segments
                 .retain(|turn| turn.end - turn.start >= SHORTEST_TURN);
+            for turn in &mut diarization.segments {
+                turn.start += from;
+                turn.end += from;
+            }
             diarization
                 .segments
                 .sort_by(|a, b| a.start.total_cmp(&b.start));
@@ -348,7 +426,7 @@ fn find_you(room: &Diarization, voiceprint: Option<&Voiceprint>) -> Option<Strin
     }
 }
 
-fn enroll(app: &AppHandle, recording: &str) -> Result<()> {
+fn enroll(app: &AppHandle, recording: &str, from: f64) -> Result<()> {
     let known = voiceprint(app);
     if known
         .as_ref()
@@ -356,7 +434,7 @@ fn enroll(app: &AppHandle, recording: &str) -> Result<()> {
     {
         return Ok(());
     }
-    let mic = diarize(app, recording, Channel::Mic)?;
+    let mic = diarize(app, recording, Channel::Mic, from)?;
     let total = mic.total_speech();
     let Some((speaker, seconds)) = mic.dominant() else {
         return Ok(());
@@ -448,7 +526,7 @@ mod tests {
             word(" is", 20.8, 21.0),
             word(" done.", 21.0, 21.5),
         ])];
-        let relabeled = relabel(&segments, Channel::Call, &call, None);
+        let relabeled = relabel(&segments, Channel::Call, &call, &call.names(None, &[]), 0.0);
         let lines: Vec<(&str, &str)> = relabeled
             .iter()
             .map(|s| (s.speaker.as_deref().unwrap(), s.text.as_str()))
@@ -475,7 +553,7 @@ mod tests {
             word(" ship", 20.0, 20.3),
             word(" Friday.", 20.5, 21.0),
         ])];
-        let relabeled = relabel(&segments, Channel::Call, &call, None);
+        let relabeled = relabel(&segments, Channel::Call, &call, &call.names(None, &[]), 0.0);
         assert_eq!(relabeled.len(), 1);
         assert_eq!(relabeled[0].speaker.as_deref(), Some("Speaker 1"));
     }
@@ -484,7 +562,7 @@ mod tests {
     fn a_single_voice_keeps_the_channel_name() {
         let call = diarization(vec![turn("S1", 0.0, 60.0)]);
         let segments = [call_segment(vec![word("Hello", 1.0, 1.5)])];
-        let relabeled = relabel(&segments, Channel::Call, &call, None);
+        let relabeled = relabel(&segments, Channel::Call, &call, &call.names(None, &[]), 0.0);
         assert_eq!(relabeled[0].speaker.as_deref(), Some("Them"));
     }
 
@@ -498,9 +576,48 @@ mod tests {
         };
         assert_eq!(find_you(&room, Some(&print)).as_deref(), Some("S2"));
         assert_eq!(find_you(&room, None).as_deref(), Some("S1"));
-        let names = room.names(Some("S2"));
+        let names = room.names(Some("S2"), &[]);
         assert_eq!(names["S2"], "You");
         assert_eq!(names["S1"], "Speaker 1");
+    }
+
+    #[test]
+    fn a_continued_recording_keeps_earlier_names_and_relabels_only_new_lines() {
+        let known = [
+            ("Speaker 1".to_owned(), vec![1.0, 0.0]),
+            ("Speaker 2".to_owned(), vec![0.0, 1.0]),
+        ];
+        let later = Diarization {
+            segments: vec![turn("S1", 100.0, 120.0), turn("S2", 120.0, 140.0)],
+            voices: HashMap::from([
+                ("S1".into(), vec![0.1, 0.95]),
+                ("S2".into(), vec![-0.7, 0.7]),
+            ]),
+        };
+        let names = later.names(None, &known);
+        assert_eq!(names["S1"], "Speaker 2");
+        assert_eq!(names["S2"], "Speaker 3");
+
+        let mut earlier = call_segment(vec![word("Hello", 10.0, 10.5)]);
+        earlier.speaker = Some("Speaker 1".into());
+        let segments = [earlier, call_segment(vec![word("Welcome", 101.0, 101.5)])];
+        let relabeled = relabel(&segments, Channel::Call, &later, &names, 100.0);
+        let speakers: Vec<&str> = relabeled
+            .iter()
+            .map(|s| s.speaker.as_deref().unwrap())
+            .collect();
+        assert_eq!(speakers, ["Speaker 1", "Speaker 2"]);
+    }
+
+    #[test]
+    fn a_short_continuation_still_matches_a_known_voice() {
+        let known = [("Speaker 2".to_owned(), vec![0.0, 1.0])];
+        let short = Diarization {
+            segments: vec![turn("S1", 0.0, 10.0)],
+            voices: HashMap::from([("S1".into(), vec![0.0, 1.0])]),
+        };
+        assert_eq!(short.names(None, &known)["S1"], "Speaker 2");
+        assert!(short.names(None, &[]).is_empty());
     }
 
     #[test]

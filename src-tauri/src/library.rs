@@ -62,6 +62,14 @@ CREATE TABLE IF NOT EXISTS note_edits (
 );
 CREATE INDEX IF NOT EXISTS note_edits_by_block ON note_edits(block_id, at);
 
+CREATE TABLE IF NOT EXISTS speaker_voices (
+    recording_id TEXT NOT NULL REFERENCES recordings(id) ON DELETE CASCADE,
+    channel TEXT NOT NULL,
+    name TEXT NOT NULL,
+    voice TEXT NOT NULL,
+    PRIMARY KEY (recording_id, channel, name)
+);
+
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -221,6 +229,46 @@ impl Db {
             .collect::<rusqlite::Result<_>>()
             .map_err(err);
         segments
+    }
+
+    pub fn voices(&self, id: &str, channel: tape::Channel) -> Result<Vec<(String, Vec<f32>)>> {
+        let connection = self.connection();
+        let mut query = connection
+            .prepare(
+                "SELECT name, voice FROM speaker_voices WHERE recording_id = ?1 AND channel = ?2",
+            )
+            .map_err(err)?;
+        let voices = query
+            .query_map(params![id, channel.name()], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(err)?
+            .filter_map(|row| {
+                let (name, voice) = row.ok()?;
+                Some((name, serde_json::from_str(&voice).ok()?))
+            })
+            .collect();
+        Ok(voices)
+    }
+
+    pub fn add_voices(
+        &self,
+        id: &str,
+        channel: tape::Channel,
+        voices: &[(String, Vec<f32>)],
+    ) -> Result<()> {
+        let mut connection = self.connection();
+        let tx = connection.transaction().map_err(err)?;
+        for (name, voice) in voices {
+            let voice = serde_json::to_string(voice).map_err(err)?;
+            tx.execute(
+                "INSERT OR IGNORE INTO speaker_voices (recording_id, channel, name, voice)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![id, channel.name(), name, voice],
+            )
+            .map_err(err)?;
+        }
+        tx.commit().map_err(err)
     }
 
     pub fn setting(&self, key: &str) -> Option<String> {
@@ -456,7 +504,9 @@ pub fn delete_recording(app: AppHandle, db: State<'_, Db>, id: String) -> Result
     db.connection()
         .execute("DELETE FROM recordings WHERE id = ?1", [&id])
         .map_err(err)?;
-    tape::remove(&app, &id);
+    if let Ok(audio) = tape::Audio::of(&app) {
+        audio.remove(&id);
+    }
     Ok(())
 }
 
@@ -570,6 +620,26 @@ mod tests {
         db.replace_segments("r", 2, &[segment("You", Some(tape::Channel::Mic))])
             .unwrap();
         assert_eq!(db.segments("r").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn speaker_voices_keep_the_first_print_and_go_with_the_recording() {
+        let db = memory_db();
+        db.create_recording("r", "Meeting", 0).unwrap();
+        let call = tape::Channel::Call;
+        db.add_voices("r", call, &[("Speaker 1".into(), vec![1.0, 0.0])])
+            .unwrap();
+        db.add_voices("r", call, &[("Speaker 1".into(), vec![0.0, 1.0])])
+            .unwrap();
+        assert_eq!(
+            db.voices("r", call).unwrap(),
+            [("Speaker 1".to_owned(), vec![1.0, 0.0])]
+        );
+        assert!(db.voices("r", tape::Channel::Mic).unwrap().is_empty());
+        db.connection()
+            .execute("DELETE FROM recordings WHERE id = 'r'", [])
+            .unwrap();
+        assert!(db.voices("r", call).unwrap().is_empty());
     }
 
     fn line(id: &str, text: &str) -> Line {
