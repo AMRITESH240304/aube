@@ -56,3 +56,41 @@
     @apply pointer-events-none float-left h-0 text-zinc-400 content-[attr(data-placeholder)];
   }
 }
+
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+@layer components {
+  .shimmer {
+    @apply h-3.5 rounded-full;
+    background: linear-gradient(90deg, var(--color-zinc-200) 25%, var(--color-zinc-100) 50%, var(--color-zinc-200) 75%);
+    background-size: 200% 100%;
+    animation:
+      rise 0.4s ease-out both,
+      shimmer 1.6s linear infinite;
+    animation-delay: calc(var(--row) * 90ms);
+  }
+  @media (prefers-color-scheme: dark) {
+    .shimmer {
+      background-image: linear-gradient(90deg, var(--color-zinc-800) 25%, var(--color-zinc-700) 50%, var(--color-zinc-800) 75%);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .shimmer {
+      animation: none;
+    }
+  }
+}

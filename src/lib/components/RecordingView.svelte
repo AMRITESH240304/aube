@@ -5,6 +5,7 @@
   import type { Summary } from "$lib/summary";
   import type { Transcript } from "$lib/transcript";
   import NoteEditor from "./NoteEditor.svelte";
+  import SummarySkeleton from "./SummarySkeleton.svelte";
   import SummaryView from "./SummaryView.svelte";
   import TranscriptPanel from "./TranscriptPanel.svelte";
 
@@ -175,7 +176,7 @@
       {#if tab === "notes"}
         <NoteEditor recordingId={recording.id} />
       {:else if writingSummary}
-        <p class="py-6 text-sm text-zinc-500" role="status">Writing the summary on this Mac…</p>
+        <SummarySkeleton />
       {:else if summaryError}
         <p class="py-6 text-sm text-red-700 dark:text-red-400" role="alert">{summaryError}</p>
       {:else if summary}
