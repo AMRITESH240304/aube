@@ -20,6 +20,7 @@ use crate::{
     mixer::{Chunk, Mixer, Source, OUTPUT_RATE},
     speakers,
     stt::Transcriber,
+    summary::Batches,
     Result,
 };
 
@@ -243,6 +244,8 @@ fn record(
     let mut transcriber = Transcriber::new(app.clone(), id.clone(), language, recorded)
         .map_err(|e| *shared.transcription_error.lock().unwrap() = Some(e))
         .ok();
+    let recorded_secs = recorded as f64 / OUTPUT_RATE as f64;
+    let mut batches = Batches::new(app.clone(), id.clone(), recorded_secs);
     while !shared.stop.load(Relaxed) {
         system.follow_default_output(&host, &tx, &shared, &mut mixer);
         let received = rx.recv_timeout(Duration::from_millis(100)).into_iter();
@@ -256,6 +259,8 @@ fn record(
             if let Some(e) = transcriber.error() {
                 *shared.transcription_error.lock().unwrap() = Some(e);
             }
+            let heard_secs = shared.frames.load(Relaxed) as f64 / OUTPUT_RATE as f64;
+            batches.tick(heard_secs, |from, to| transcriber.lines(from, to));
         }
     }
 
@@ -271,6 +276,7 @@ fn record(
         transcriber.push(&samples);
         transcriber.finish()?;
         speakers::identify(app, id);
+        batches.finish();
     }
     Ok(())
 }

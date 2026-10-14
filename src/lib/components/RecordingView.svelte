@@ -2,8 +2,11 @@
   import { onMount, tick } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { formatDuration, recorder, type Recording } from "$lib/recorder.svelte";
+  import type { Summary } from "$lib/summary";
   import type { Transcript } from "$lib/transcript";
   import NoteEditor from "./NoteEditor.svelte";
+  import SummarySkeleton from "./SummarySkeleton.svelte";
+  import SummaryView from "./SummaryView.svelte";
   import TranscriptPanel from "./TranscriptPanel.svelte";
 
   let { recording, at, onBack }: { recording: Recording; at?: number; onBack: () => void } = $props();
@@ -16,10 +19,14 @@
   let confirmDelete = $state(false);
   let busy = $state(false);
   let actionError = $state("");
+  let summary = $state<Summary | null>(null);
+  let tab = $state<"summary" | "notes">("notes");
 
   const segments = $derived(transcript?.segments ?? []);
   const empty = $derived(error || (transcript ? "This recording doesn't have a transcript." : "Loading transcript…"));
   const identifying = $derived(recorder.identifyingSpeakers.includes(recording.id));
+  const writingSummary = $derived(recorder.writingSummary.includes(recording.id));
+  const summaryError = $derived(recorder.summaryErrors[recording.id]);
 
   async function load() {
     try {
@@ -29,14 +36,30 @@
     }
   }
 
+  async function loadSummary() {
+    summary = await invoke<Summary | null>("summary", { id: recording.id }).catch(() => null);
+    if (summary || writingSummary) tab = "summary";
+  }
+
+  function writeSummary() {
+    recorder.summaryErrors = { ...recorder.summaryErrors, [recording.id]: null };
+    recorder.writingSummary = [...recorder.writingSummary, recording.id];
+    tab = "summary";
+    invoke("summarize", { id: recording.id });
+  }
+
   onMount(async () => {
-    await load();
+    await Promise.all([load(), loadSummary()]);
     await tick();
     document.querySelector(`[data-start="${at}"]`)?.scrollIntoView({ block: "center" });
   });
 
   $effect(() => {
     if (recorder.speakersIdentified[recording.id]) load();
+  });
+
+  $effect(() => {
+    if (recorder.summaryWritten[recording.id]) loadSummary();
   });
 
   async function run(action: () => Promise<unknown>) {
@@ -130,7 +153,39 @@
       {#if actionError}
         <p class="mb-6 text-sm text-red-700 dark:text-red-400" role="alert">{actionError}</p>
       {/if}
-      <NoteEditor recordingId={recording.id} />
+      <div class="mb-5 flex items-center gap-1" role="tablist" aria-label="View">
+        {#each [["summary", "Summary"], ["notes", "My notes"]] as [id, label] (id)}
+          <button
+            role="tab"
+            aria-selected={tab === id}
+            class={[
+              "rounded-full px-3 py-1 text-sm focus-visible:outline-2 focus-visible:outline-blue-600",
+              tab === id ? "bg-zinc-900 text-white dark:bg-white dark:text-zinc-900" : "hover:bg-zinc-100 dark:hover:bg-zinc-800",
+            ]}
+            onclick={() => (tab = id as "summary" | "notes")}
+          >
+            {label}
+          </button>
+        {/each}
+        {#if tab === "summary" && !writingSummary && transcript?.segments.length}
+          <button class="btn ml-auto py-1 text-xs" onclick={writeSummary}>
+            {summary ? "Rewrite summary" : "Write summary"}
+          </button>
+        {/if}
+      </div>
+      {#if tab === "notes"}
+        <NoteEditor recordingId={recording.id} />
+      {:else if writingSummary}
+        <SummarySkeleton />
+      {:else if summaryError}
+        <p class="py-6 text-sm text-red-700 dark:text-red-400" role="alert">{summaryError}</p>
+      {:else if summary}
+        <SummaryView {summary} />
+      {:else}
+        <p class="py-6 text-sm text-zinc-500">
+          No summary yet. Aube writes one with Apple Intelligence from the transcript and your notes.
+        </p>
+      {/if}
     </div>
   </div>
   <TranscriptPanel

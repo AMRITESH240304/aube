@@ -9,6 +9,7 @@ mod permission;
 mod recorder;
 mod speakers;
 mod stt;
+mod summary;
 mod tape;
 
 type Result<T> = std::result::Result<T, String>;
@@ -38,6 +39,8 @@ pub fn run() {
             library::search_transcripts,
             library::note,
             library::save_note,
+            summary::summary,
+            summary::summarize,
             stt::transcription_languages,
             stt::install_language,
         ])

@@ -10,7 +10,8 @@ fn main() {
             }
         }
     }
-    build_sidecar();
+    build_sidecar("stt/main.swift", "aube-stt");
+    build_sidecar("notes/main.swift", "aube-notes");
     build_diarizer();
     fetch_speaker_models();
     fetch_language_model();
@@ -66,9 +67,9 @@ fn sha256_of(path: &str) -> Option<String> {
     })
 }
 
-// Compiles the Swift transcriber that Tauri bundles as a sidecar (`externalBin`).
-fn build_sidecar() {
-    println!("cargo:rerun-if-changed=stt/main.swift");
+// Compiles a single-file Swift sidecar that Tauri bundles (`externalBin`).
+fn build_sidecar(source: &str, name: &str) {
+    println!("cargo:rerun-if-changed={source}");
     let target = std::env::var("TARGET").unwrap();
     let arch = target
         .split('-')
@@ -79,11 +80,11 @@ fn build_sidecar() {
     let status = std::process::Command::new("xcrun")
         .args(["swiftc", "-O", "-swift-version", "5", "-target"])
         .arg(format!("{arch}-apple-macos26.0"))
-        .args(["stt/main.swift", "-o"])
-        .arg(format!("binaries/aube-stt-{target}"))
+        .args([source, "-o"])
+        .arg(format!("binaries/{name}-{target}"))
         .status()
         .expect("xcrun not found: install the Xcode command line tools");
-    assert!(status.success(), "compiling stt/main.swift failed");
+    assert!(status.success(), "compiling {source} failed");
 }
 
 fn build_diarizer() {
