@@ -26,7 +26,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "externalBin": ["binaries/aube-stt", "binaries/aube-diarizer"],
+    "externalBin": ["binaries/aube-stt", "binaries/aube-notes", "binaries/aube-diarizer"],
     "resources": {
       "models/diarizer/": "models/diarizer/"
     },

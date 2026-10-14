@@ -70,6 +70,20 @@ CREATE TABLE IF NOT EXISTS speaker_voices (
     PRIMARY KEY (recording_id, channel, name)
 );
 
+CREATE TABLE IF NOT EXISTS summary_batches (
+    recording_id TEXT NOT NULL REFERENCES recordings(id) ON DELETE CASCADE,
+    start_secs REAL NOT NULL,
+    end_secs REAL NOT NULL,
+    topics TEXT NOT NULL,
+    PRIMARY KEY (recording_id, start_secs)
+);
+
+CREATE TABLE IF NOT EXISTS summaries (
+    recording_id TEXT PRIMARY KEY REFERENCES recordings(id) ON DELETE CASCADE,
+    summary TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -269,6 +283,82 @@ impl Db {
             .map_err(err)?;
         }
         tx.commit().map_err(err)
+    }
+
+    pub fn note_lines(&self, id: &str) -> Result<Vec<String>> {
+        self.texts(
+            "SELECT text FROM note_blocks WHERE recording_id = ?1 AND deleted_at IS NULL ORDER BY position",
+            params![id],
+        )
+    }
+
+    pub fn notes_between(&self, id: &str, from: f64, to: f64) -> Result<Vec<String>> {
+        self.texts(
+            "SELECT text FROM note_blocks
+             WHERE recording_id = ?1 AND deleted_at IS NULL AND created_secs >= ?2 AND created_secs < ?3
+             ORDER BY position",
+            params![id, from, to],
+        )
+    }
+
+    fn texts(&self, sql: &str, params: impl rusqlite::Params) -> Result<Vec<String>> {
+        let connection = self.connection();
+        let mut query = connection.prepare(sql).map_err(err)?;
+        let texts = query
+            .query_map(params, |row| row.get(0))
+            .map_err(err)?
+            .collect::<rusqlite::Result<_>>()
+            .map_err(err);
+        texts
+    }
+
+    pub fn batches(&self, id: &str) -> Result<Vec<(f64, f64, String)>> {
+        let connection = self.connection();
+        let mut query = connection
+            .prepare(
+                "SELECT start_secs, end_secs, topics FROM summary_batches
+                 WHERE recording_id = ?1 ORDER BY start_secs",
+            )
+            .map_err(err)?;
+        let batches = query
+            .query_map([id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .map_err(err)?
+            .collect::<rusqlite::Result<_>>()
+            .map_err(err);
+        batches
+    }
+
+    pub fn add_batch(&self, id: &str, start: f64, end: f64, topics: &str) -> Result<()> {
+        self.connection()
+            .execute(
+                "INSERT OR REPLACE INTO summary_batches (recording_id, start_secs, end_secs, topics)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![id, start, end, topics],
+            )
+            .map(drop)
+            .map_err(err)
+    }
+
+    pub fn summary(&self, id: &str) -> Option<String> {
+        self.connection()
+            .query_row(
+                "SELECT summary FROM summaries WHERE recording_id = ?1",
+                [id],
+                |row| row.get(0),
+            )
+            .ok()
+    }
+
+    pub fn set_summary(&self, id: &str, summary: &str) -> Result<()> {
+        self.connection()
+            .execute(
+                "INSERT INTO summaries (recording_id, summary, created_at) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(recording_id) DO UPDATE SET
+                    summary = excluded.summary, created_at = excluded.created_at",
+                params![id, summary, now()],
+            )
+            .map(drop)
+            .map_err(err)
     }
 
     pub fn setting(&self, key: &str) -> Option<String> {
@@ -572,125 +662,5 @@ pub fn save_note(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn memory_db() -> Db {
-        let connection = Connection::open_in_memory().unwrap();
-        migrate(&connection).unwrap();
-        Db(Mutex::new(connection))
-    }
-
-    #[test]
-    fn segments_keep_their_channel_and_words() {
-        let db = memory_db();
-        db.create_recording("r", "Meeting", 0).unwrap();
-        let word = Word {
-            text: "hello".into(),
-            start: Some(1.0),
-            end: Some(1.4),
-        };
-        let segment = |speaker: &str, source| Segment {
-            speaker: Some(speaker.into()),
-            start: 1.0,
-            end: 1.4,
-            text: "hello".into(),
-            source,
-            words: vec![word.clone()],
-        };
-        db.add_segments("r", &[segment("Speaker 1", Some(tape::Channel::Call))])
-            .unwrap();
-        db.connection()
-            .execute(
-                "INSERT INTO segments (recording_id, speaker, start_secs, end_secs, text)
-                 VALUES ('r', 'You', 2, 3, 'older')",
-                [],
-            )
-            .unwrap();
-
-        let saved = db.segments("r").unwrap();
-        assert_eq!(saved[0].source, Some(tape::Channel::Call));
-        assert_eq!(saved[0].words, std::slice::from_ref(&word));
-        assert_eq!(saved[1].source, Some(tape::Channel::Mic));
-        assert!(saved[1].words.is_empty());
-
-        db.replace_segments("r", 1, &[segment("You", Some(tape::Channel::Mic))])
-            .unwrap();
-        assert_eq!(db.segments("r").unwrap().len(), 2);
-        db.replace_segments("r", 2, &[segment("You", Some(tape::Channel::Mic))])
-            .unwrap();
-        assert_eq!(db.segments("r").unwrap().len(), 1);
-    }
-
-    #[test]
-    fn speaker_voices_keep_the_first_print_and_go_with_the_recording() {
-        let db = memory_db();
-        db.create_recording("r", "Meeting", 0).unwrap();
-        let call = tape::Channel::Call;
-        db.add_voices("r", call, &[("Speaker 1".into(), vec![1.0, 0.0])])
-            .unwrap();
-        db.add_voices("r", call, &[("Speaker 1".into(), vec![0.0, 1.0])])
-            .unwrap();
-        assert_eq!(
-            db.voices("r", call).unwrap(),
-            [("Speaker 1".to_owned(), vec![1.0, 0.0])]
-        );
-        assert!(db.voices("r", tape::Channel::Mic).unwrap().is_empty());
-        db.connection()
-            .execute("DELETE FROM recordings WHERE id = 'r'", [])
-            .unwrap();
-        assert!(db.voices("r", call).unwrap().is_empty());
-    }
-
-    fn line(id: &str, text: &str) -> Line {
-        Line {
-            id: id.into(),
-            text: text.into(),
-        }
-    }
-
-    fn edits(db: &Db) -> Vec<(String, String, String, String)> {
-        let connection = db.connection();
-        let mut query = connection
-            .prepare("SELECT block_id, kind, before, after FROM note_edits ORDER BY id")
-            .unwrap();
-        query
-            .query_map([], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-            })
-            .unwrap()
-            .collect::<rusqlite::Result<_>>()
-            .unwrap()
-    }
-
-    #[test]
-    fn records_line_history() {
-        let db = memory_db();
-        db.create_recording("r", "Meeting", 0).unwrap();
-        let save = |lines: &[Line], secs| db.save_note("r", "{}", "", lines, secs).unwrap();
-
-        save(&[line("a", "hello")], Some(724.0));
-        save(&[line("a", "hello world")], Some(726.0));
-        save(&[line("a", "hello world"), line("b", "next")], Some(730.0));
-        save(&[line("b", "next")], None);
-
-        let created_secs: Option<f64> = db
-            .connection()
-            .query_row(
-                "SELECT created_secs FROM note_blocks WHERE id = 'a'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(created_secs, Some(724.0));
-        assert_eq!(
-            edits(&db),
-            [
-                ("a", "create", "", "hello world"),
-                ("b", "create", "", "next"),
-                ("a", "delete", "hello world", ""),
-            ]
-            .map(|(a, b, c, d)| (a.into(), b.into(), c.into(), d.into()))
-        );
-    }
-}
+#[path = "../tests/unit/library.rs"]
+mod tests;

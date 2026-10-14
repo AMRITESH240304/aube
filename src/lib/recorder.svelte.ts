@@ -26,6 +26,7 @@ export type Language = { id: string; name: string; installed: boolean };
 type LiveText = LiveTurn & { recordingId: string };
 type LiveLanguage = { recordingId: string; speaker: string; language: string | null };
 type SpeakerProgress = { recordingId: string; working: boolean };
+type SummaryProgress = { recordingId: string; working: boolean; error: string | null };
 
 const SILENCE_HINT_SECS = 5;
 const LANGUAGE_KEY = "aube.language";
@@ -55,6 +56,9 @@ class Recorder {
   live = $state<LiveTurn[]>([]);
   identifyingSpeakers = $state<string[]>([]);
   speakersIdentified = $state<Record<string, number>>({});
+  writingSummary = $state<string[]>([]);
+  summaryWritten = $state<Record<string, number>>({});
+  summaryErrors = $state<Record<string, string | null>>({});
 
   #poll?: ReturnType<typeof setInterval>;
   #continuedFrom = 0;
@@ -80,6 +84,12 @@ class Recorder {
       const others = this.identifyingSpeakers.filter((id) => id !== recordingId);
       this.identifyingSpeakers = working ? [...others, recordingId] : others;
       if (!working) this.speakersIdentified = { ...this.speakersIdentified, [recordingId]: Date.now() };
+    });
+    listen<SummaryProgress>("summary", ({ payload: { recordingId, working, error } }) => {
+      const others = this.writingSummary.filter((id) => id !== recordingId);
+      this.writingSummary = working ? [...others, recordingId] : others;
+      this.summaryErrors = { ...this.summaryErrors, [recordingId]: error };
+      if (!working) this.summaryWritten = { ...this.summaryWritten, [recordingId]: Date.now() };
     });
     this.#loadLanguages();
     await this.refresh();
