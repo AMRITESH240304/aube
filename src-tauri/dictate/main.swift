@@ -543,28 +543,14 @@ final class Dictation {
 
     func paste(_ text: String) {
         let board = NSPasteboard.general
-        let saved: [[(NSPasteboard.PasteboardType, Data)]] = board.pasteboardItems?.map { item in
-            item.types.compactMap { type in item.data(forType: type).map { (type, $0) } }
-        } ?? []
         board.clearContents()
         board.setString(text, forType: .string)
-        board.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.TransientType"))
 
         let source = CGEventSource(stateID: .combinedSessionState)
         for keyDown in [true, false] {
             let event = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: keyDown)
             event?.flags = .maskCommand
             event?.post(tap: .cghidEventTap)
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            board.clearContents()
-            let items = saved.map { entries in
-                let item = NSPasteboardItem()
-                for (type, data) in entries { item.setData(data, forType: type) }
-                return item
-            }
-            if !items.isEmpty { board.writeObjects(items) }
         }
     }
 }
