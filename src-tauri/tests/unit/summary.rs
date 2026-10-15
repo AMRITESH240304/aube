@@ -138,3 +138,32 @@ fn a_batch_reads_only_its_own_window() {
         ["Speaker 1: Inside"]
     );
 }
+
+#[test]
+fn refused_stretches_are_merged_and_named_in_minutes() {
+    assert_eq!(
+        describe_missing(vec![
+            (2100.0, 2400.0, Missing::Whole),
+            (1800.0, 2100.0, Missing::Whole),
+            (2700.0, 3000.0, Missing::Part),
+            (3300.0, 3342.0, Missing::Whole),
+        ]),
+        [
+            "30–40 min couldn't be summarised.",
+            "Parts of 45–50 min couldn't be summarised.",
+            "55–56 min couldn't be summarised.",
+        ]
+    );
+    assert!(describe_missing(Vec::new()).is_empty());
+}
+
+#[test]
+fn a_batch_reply_says_whether_anything_was_refused() {
+    let refused: Topics = serde_json::from_str(r#"{"topics":[],"declined":true}"#).unwrap();
+    assert!(refused.declined && refused.topics.is_empty());
+    let older: Topics =
+        serde_json::from_str(r#"{"topics":[{"heading":"Launch","points":["Ship."]}]}"#).unwrap();
+    assert!(!older.declined);
+    let stored: Summary = serde_json::from_str(r#"{"overview":"","sections":[]}"#).unwrap();
+    assert!(stored.skipped.is_empty());
+}

@@ -90,7 +90,11 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 ";
 
-const SEGMENT_DETAIL_COLUMNS: [(&str, &str); 2] = [("source", "TEXT"), ("words", "TEXT")];
+const ADDED_COLUMNS: [(&str, &str, &str); 3] = [
+    ("segments", "source", "TEXT"),
+    ("segments", "words", "TEXT"),
+    ("summary_batches", "declined", "INTEGER NOT NULL DEFAULT 0"),
+];
 
 const MERGE_EDITS_MS: i64 = 5_000;
 
@@ -129,6 +133,14 @@ pub struct Word {
     pub text: String,
     pub start: Option<f64>,
     pub end: Option<f64>,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Batch {
+    pub start: f64,
+    pub end: f64,
+    pub topics: String,
+    pub declined: bool,
 }
 
 #[derive(Serialize)]
@@ -312,28 +324,36 @@ impl Db {
         texts
     }
 
-    pub fn batches(&self, id: &str) -> Result<Vec<(f64, f64, String)>> {
+    pub fn batches(&self, id: &str) -> Result<Vec<Batch>> {
         let connection = self.connection();
         let mut query = connection
             .prepare(
-                "SELECT start_secs, end_secs, topics FROM summary_batches
+                "SELECT start_secs, end_secs, topics, declined FROM summary_batches
                  WHERE recording_id = ?1 ORDER BY start_secs",
             )
             .map_err(err)?;
         let batches = query
-            .query_map([id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .query_map([id], |row| {
+                Ok(Batch {
+                    start: row.get(0)?,
+                    end: row.get(1)?,
+                    topics: row.get(2)?,
+                    declined: row.get(3)?,
+                })
+            })
             .map_err(err)?
             .collect::<rusqlite::Result<_>>()
             .map_err(err);
         batches
     }
 
-    pub fn add_batch(&self, id: &str, start: f64, end: f64, topics: &str) -> Result<()> {
+    pub fn add_batch(&self, id: &str, batch: &Batch) -> Result<()> {
         self.connection()
             .execute(
-                "INSERT OR REPLACE INTO summary_batches (recording_id, start_secs, end_secs, topics)
-                 VALUES (?1, ?2, ?3, ?4)",
-                params![id, start, end, topics],
+                "INSERT OR REPLACE INTO summary_batches
+                    (recording_id, start_secs, end_secs, topics, declined)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![id, batch.start, batch.end, batch.topics, batch.declined],
             )
             .map(drop)
             .map_err(err)
@@ -464,14 +484,13 @@ impl Db {
 
 fn migrate(connection: &Connection) -> rusqlite::Result<()> {
     connection.execute_batch(SCHEMA)?;
-    let existing: Vec<String> = connection
-        .prepare("SELECT name FROM pragma_table_info('segments')")?
-        .query_map([], |row| row.get(0))?
-        .collect::<rusqlite::Result<_>>()?;
-    for (column, kind) in SEGMENT_DETAIL_COLUMNS {
+    for (table, column, kind) in ADDED_COLUMNS {
+        let existing: Vec<String> = connection
+            .prepare(&format!("SELECT name FROM pragma_table_info('{table}')"))?
+            .query_map([], |row| row.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
         if !existing.iter().any(|name| name == column) {
-            connection
-                .execute_batch(&format!("ALTER TABLE segments ADD COLUMN {column} {kind}"))?;
+            connection.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {kind}"))?;
         }
     }
     Ok(())

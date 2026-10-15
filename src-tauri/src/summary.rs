@@ -12,7 +12,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::{
     err,
-    library::{Db, Segment},
+    library::{Batch, Db, Segment},
     Result,
 };
 
@@ -40,6 +40,14 @@ enum Reply<T> {
 #[derive(Deserialize)]
 struct Topics {
     topics: Vec<Topic>,
+    #[serde(default)]
+    declined: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Missing {
+    Whole,
+    Part,
 }
 
 #[derive(Deserialize)]
@@ -78,6 +86,8 @@ pub struct Section {
 pub struct Summary {
     pub overview: String,
     pub sections: Vec<Section>,
+    #[serde(default)]
+    pub skipped: Vec<String>,
 }
 
 #[derive(Default, Debug, PartialEq)]
@@ -180,18 +190,25 @@ fn summarise_batch(
     transcript: Vec<String>,
 ) -> Result<()> {
     let db = app.state::<Db>();
-    let topics = if transcript.is_empty() {
-        Vec::new()
+    let found = if transcript.is_empty() {
+        Topics {
+            topics: Vec::new(),
+            declined: false,
+        }
     } else {
         let notes = read_notes(db.notes_between(recording, start, end)?).lines;
         ask::<Topics>(
             "batch",
             &json!({ "transcript": transcript, "notes": notes }),
         )?
-        .topics
     };
-    let topics = serde_json::to_string(&topics).map_err(err)?;
-    db.add_batch(recording, start, end, &topics)
+    let batch = Batch {
+        start,
+        end,
+        topics: serde_json::to_string(&found.topics).map_err(err)?,
+        declined: found.declined,
+    };
+    db.add_batch(recording, &batch)
 }
 
 fn summarise(app: &AppHandle, recording: &str) -> Result<()> {
@@ -201,32 +218,71 @@ fn summarise(app: &AppHandle, recording: &str) -> Result<()> {
     let covered: Vec<(f64, f64)> = db
         .batches(recording)?
         .into_iter()
-        .map(|(start, end, _)| (start, end))
+        .map(|batch| (batch.start, batch.end))
         .collect();
+    let mut missing = Vec::new();
+    let mut first_error = None;
     for (start, end) in gaps(&covered, duration) {
-        summarise_batch(
-            app,
-            recording,
-            start,
-            end,
-            transcript_between(&segments, start, end),
-        )?;
+        let transcript = transcript_between(&segments, start, end);
+        if let Err(e) = summarise_batch(app, recording, start, end, transcript) {
+            eprintln!("couldn't summarise {start}-{end}s of {recording}: {e}");
+            missing.push((start, end, Missing::Whole));
+            first_error.get_or_insert(e);
+        }
     }
-    let topics: Vec<Topic> = db
-        .batches(recording)?
-        .into_iter()
-        .flat_map(|(_, _, topics)| serde_json::from_str::<Vec<Topic>>(&topics).unwrap_or_default())
-        .collect();
+    let mut topics: Vec<Topic> = Vec::new();
+    for batch in db.batches(recording)? {
+        let found: Vec<Topic> = serde_json::from_str(&batch.topics).unwrap_or_default();
+        if batch.declined {
+            let kind = if found.is_empty() {
+                Missing::Whole
+            } else {
+                Missing::Part
+            };
+            missing.push((batch.start, batch.end, kind));
+        }
+        topics.extend(found);
+    }
     if topics.is_empty() {
-        return Ok(());
+        return match first_error {
+            Some(e) => Err(e),
+            None if !missing.is_empty() => {
+                Err("Apple Intelligence declined to summarise this meeting.".to_owned())
+            }
+            None => Ok(()),
+        };
     }
     let notes = read_notes(db.note_lines(recording)?);
     let combined: Combined = ask(
         "combine",
         &json!({ "title": title, "topics": topics, "notes": notes.lines, "headings": notes.headings }),
     )?;
-    let summary = assemble(combined, &topics, &notes);
+    let mut summary = assemble(combined, &topics, &notes);
+    summary.skipped = describe_missing(missing);
     db.set_summary(recording, &serde_json::to_string(&summary).map_err(err)?)
+}
+
+fn describe_missing(mut missing: Vec<(f64, f64, Missing)>) -> Vec<String> {
+    missing.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut merged: Vec<(f64, f64, Missing)> = Vec::new();
+    for (start, end, kind) in missing {
+        match merged.last_mut() {
+            Some(last) if last.2 == kind && start - last.1 < SHORTEST_GAP => {
+                last.1 = last.1.max(end)
+            }
+            _ => merged.push((start, end, kind)),
+        }
+    }
+    merged
+        .into_iter()
+        .map(|(start, end, kind)| {
+            let minutes = format!("{}–{} min", (start / 60.0).floor(), (end / 60.0).ceil());
+            match kind {
+                Missing::Whole => format!("{minutes} couldn't be summarised."),
+                Missing::Part => format!("Parts of {minutes} couldn't be summarised."),
+            }
+        })
+        .collect()
 }
 
 fn gaps(covered: &[(f64, f64)], duration: f64) -> Vec<(f64, f64)> {
@@ -363,6 +419,7 @@ fn assemble(combined: Combined, topics: &[Topic], notes: &Notes) -> Summary {
     Summary {
         overview: combined.overview,
         sections,
+        skipped: Vec::new(),
     }
 }
 
