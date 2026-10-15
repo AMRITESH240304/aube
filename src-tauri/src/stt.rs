@@ -411,6 +411,10 @@ fn confident<'a>(speech: &[f32], languages: &'a [Language]) -> Option<&'a Langua
     languages.iter().find(|l| l.code() == guess.code)
 }
 
+pub fn your_language(app: &AppHandle) -> Option<String> {
+    saved_guesses(app).remove(SPEAKERS[0].0)
+}
+
 fn saved_guesses(app: &AppHandle) -> HashMap<String, String> {
     app.state::<Db>()
         .setting(GUESSES)

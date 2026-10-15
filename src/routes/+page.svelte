@@ -5,6 +5,7 @@
   import RecordingView from "$lib/components/RecordingView.svelte";
   import Recordings from "$lib/components/Recordings.svelte";
   import SearchResults from "$lib/components/SearchResults.svelte";
+  import Settings from "$lib/components/Settings.svelte";
   import Sidebar, { type View } from "$lib/components/Sidebar.svelte";
   import { recorder } from "$lib/recorder.svelte";
 
@@ -45,6 +46,8 @@
           <div class="mx-auto w-full max-w-3xl px-8 py-8">
             {#if query.trim()}
               <SearchResults {query} onOpen={openRecording} />
+            {:else if view.kind === "settings"}
+              <Settings />
             {:else if view.kind === "home"}
               <Recordings limit={5} onOpen={openRecording} onViewAll={() => navigate({ kind: "all" })} />
             {:else}
