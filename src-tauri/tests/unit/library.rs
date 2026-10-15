@@ -148,15 +148,18 @@ fn summaries_read_notes_by_when_they_were_written() {
     assert_eq!(db.notes_between("r", 300.0, 600.0).unwrap(), ["late"]);
     assert_eq!(db.note_lines("r").unwrap(), ["late", "after"]);
 
-    db.add_batch("r", 300.0, 600.0, "[]").unwrap();
-    db.add_batch("r", 0.0, 300.0, "[1]").unwrap();
-    db.add_batch("r", 0.0, 300.0, "[2]").unwrap();
+    let batch = |start: f64, topics: &str, declined| Batch {
+        start,
+        end: start + 300.0,
+        topics: topics.into(),
+        declined,
+    };
+    db.add_batch("r", &batch(300.0, "[]", true)).unwrap();
+    db.add_batch("r", &batch(0.0, "[1]", false)).unwrap();
+    db.add_batch("r", &batch(0.0, "[2]", false)).unwrap();
     assert_eq!(
         db.batches("r").unwrap(),
-        [
-            (0.0, 300.0, "[2]".to_owned()),
-            (300.0, 600.0, "[]".to_owned())
-        ]
+        [batch(0.0, "[2]", false), batch(300.0, "[]", true)]
     );
 
     assert!(db.summary("r").is_none());

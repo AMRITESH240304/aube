@@ -22,6 +22,11 @@ struct Topics: Codable {
     let topics: [Topic]
 }
 
+struct Batch: Encodable {
+    let topics: [Topic]
+    let declined: Bool
+}
+
 struct Headings: Codable {
     let headings: [String]
 }
@@ -146,8 +151,8 @@ let placementInstructions = """
     numbered. For each note, in order, choose the heading it belongs under.
     """
 
-func respond<Value: Decodable>(_ instructions: String, _ prompt: String, _ schema: GenerationSchema, as type: Value.Type) async throws -> Value {
-    let session = LanguageModelSession(instructions: instructions)
+func respond<Value: Decodable>(_ instructions: String?, _ prompt: String, _ schema: GenerationSchema, as type: Value.Type) async throws -> Value {
+    let session = instructions.map { LanguageModelSession(instructions: $0) } ?? LanguageModelSession()
     let reply = try await session.respond(to: prompt, schema: schema, options: options)
     return try JSONDecoder().decode(Value.self, from: Data(reply.content.jsonString.utf8))
 }
@@ -184,7 +189,7 @@ func numbered(_ lines: [String]) -> String {
     lines.enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator: "\n")
 }
 
-func topics(_ transcript: [String], _ notes: [String]) async throws -> [Topic] {
+func topics(_ transcript: [String], _ notes: [String]) async throws -> Batch {
     var prompt = "Transcript:\n" + transcript.joined(separator: "\n")
     if !notes.isEmpty {
         prompt += "\n\nNotes the user typed:\n" + notes.joined(separator: "\n")
@@ -193,15 +198,31 @@ func topics(_ transcript: [String], _ notes: [String]) async throws -> [Topic] {
     let split = {
         let first = try await topics(Array(transcript[..<half]), notes)
         let second = try await topics(Array(transcript[half...]), [])
-        return first + second
+        return Batch(topics: first.topics + second.topics, declined: first.declined || second.declined)
     }
     if estimatedTokens(prompt) > inputBudget && transcript.count > 1 {
         return try await split()
     }
     do {
-        return try await respond(batchInstructions, prompt, topicsSchema, as: Topics.self).topics
+        return Batch(topics: try await respond(batchInstructions, prompt, topicsSchema, as: Topics.self).topics, declined: false)
     } catch where failure(error) == .tooLong && transcript.count > 1 {
         return try await split()
+    } catch where failure(error) == .declined {
+        if let plain = try? await respond(nil, prompt, topicsSchema, as: Topics.self) {
+            return Batch(topics: plain.topics, declined: false)
+        }
+        if transcript.count > 1 {
+            return try await split()
+        }
+        return Batch(topics: [], declined: true)
+    }
+}
+
+func unlessDeclined<Value>(_ fallback: Value, _ run: () async throws -> Value) async throws -> Value {
+    do {
+        return try await run()
+    } catch where failure(error) == .declined {
+        return fallback
     }
 }
 
@@ -228,7 +249,9 @@ func combine(_ request: CombineRequest) async throws -> Summary {
     if !request.headings.isEmpty {
         prompt += "\n\nThe user organised their notes under these headings; reuse them where they fit: " + request.headings.joined(separator: ", ")
     }
-    let named = try await respond(headingsInstructions, prompt, headingsSchema(topics: topics.count), as: Headings.self).headings
+    let named = try await unlessDeclined(topics.map(\.heading)) {
+        try await respond(headingsInstructions, prompt, headingsSchema(topics: topics.count), as: Headings.self).headings
+    }
     var headings: [String] = []
     var grouped: [String: [Int]] = [:]
     for (index, topic) in topics.enumerated() {
@@ -239,16 +262,18 @@ func combine(_ request: CombineRequest) async throws -> Summary {
         grouped[heading, default: []].append(index)
     }
 
-    let overview = try await respond(overviewInstructions, "Meeting: \(request.title)\n\n" + outline, overviewSchema, as: Overview.self).overview
+    let overview = try await unlessDeclined("") {
+        try await respond(overviewInstructions, "Meeting: \(request.title)\n\n" + outline, overviewSchema, as: Overview.self).overview
+    }
 
     var filed: [String: [Int]] = [:]
     if headings.count == 1 {
         filed[headings[0]] = Array(request.notes.indices)
     } else if !request.notes.isEmpty {
         let prompt = "Headings:\n" + headings.map { "- \($0)" }.joined(separator: "\n") + "\n\nThe user's notes:\n" + numbered(request.notes)
-        let placement = try await respond(
-            placementInstructions, prompt, placementSchema(headings: headings, notes: request.notes.count), as: Headings.self
-        )
+        let placement = try await unlessDeclined(Headings(headings: [])) {
+            try await respond(placementInstructions, prompt, placementSchema(headings: headings, notes: request.notes.count), as: Headings.self)
+        }
         for (note, heading) in placement.headings.enumerated() {
             filed[heading, default: []].append(note)
         }
@@ -276,7 +301,7 @@ do {
     switch CommandLine.arguments.dropFirst().first {
     case "batch":
         let request = try JSONDecoder().decode(BatchRequest.self, from: input)
-        emit(Topics(topics: try await topics(request.transcript, request.notes)))
+        emit(try await topics(request.transcript, request.notes))
     case "combine":
         emit(try await combine(try JSONDecoder().decode(CombineRequest.self, from: input)))
     default:
