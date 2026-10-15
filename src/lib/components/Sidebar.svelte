@@ -1,5 +1,5 @@
 <script module lang="ts">
-  export type View = { kind: "home" } | { kind: "all" };
+  export type View = { kind: "home" } | { kind: "all" } | { kind: "settings" };
 </script>
 
 <script lang="ts">
@@ -65,6 +65,10 @@
   <div class="space-y-0.5">
     {@render navItem("Home", { kind: "home" })}
     {@render navItem("All recordings", { kind: "all" }, recorder.recordings.length)}
+  </div>
+
+  <div class="mt-auto">
+    {@render navItem("Settings", { kind: "settings" })}
   </div>
 
 </nav>

@@ -1,5 +1,6 @@
 use tauri::{Manager, RunEvent};
 
+mod dictation;
 mod echo;
 mod library;
 mod lid;
@@ -22,9 +23,11 @@ fn err(e: impl std::fmt::Display) -> String {
 pub fn run() {
     tauri::Builder::default()
         .manage(recorder::Recorder::default())
+        .manage(dictation::Dictation::default())
         .setup(|app| {
             app.manage(library::Db::open(app.handle())?);
             speakers::identify_waiting(app.handle());
+            dictation::start(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -41,6 +44,9 @@ pub fn run() {
             library::save_note,
             summary::summary,
             summary::summarize,
+            dictation::dictation,
+            dictation::set_dictation,
+            dictation::open_system_settings,
             stt::transcription_languages,
             stt::install_language,
         ])
@@ -50,6 +56,7 @@ pub fn run() {
             // Quitting mid-call saves the recording instead of losing it.
             if let RunEvent::Exit = event {
                 let _ = recorder::finish(&app.state::<recorder::Recorder>());
+                dictation::stop(app);
             }
         });
 }

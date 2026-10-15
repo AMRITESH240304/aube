@@ -27,6 +27,15 @@ func seconds(_ time: CMTime) -> Double {
     time.seconds.isFinite ? time.seconds : 0
 }
 
+func makeRoom(for locale: Locale) async {
+    let reserved = await AssetInventory.reservedLocales
+    let wanted = locale.identifier(.bcp47)
+    guard !reserved.contains(where: { $0.identifier(.bcp47) == wanted }) else { return }
+    for old in reserved.prefix(max(reserved.count - AssetInventory.maximumReservedLocales + 1, 0)) {
+        await AssetInventory.release(reservedLocale: old)
+    }
+}
+
 let arguments = Array(CommandLine.arguments.dropFirst())
 
 if arguments.first == "--languages" {
@@ -65,6 +74,7 @@ let transcriber = SpeechTranscriber(
 )
 do {
     // Downloads the language model the first time; a no-op once installed.
+    await makeRoom(for: locale)
     if let request = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
         try await request.downloadAndInstall()
     }

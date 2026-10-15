@@ -12,6 +12,7 @@ fn main() {
     }
     build_sidecar("stt/main.swift", "aube-stt");
     build_sidecar("notes/main.swift", "aube-notes");
+    build_sidecar("dictate/main.swift", "aube-dictate");
     build_diarizer();
     fetch_speaker_models();
     fetch_language_model();

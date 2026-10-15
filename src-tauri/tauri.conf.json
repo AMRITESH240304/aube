@@ -26,7 +26,12 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "externalBin": ["binaries/aube-stt", "binaries/aube-notes", "binaries/aube-diarizer"],
+    "externalBin": [
+      "binaries/aube-stt",
+      "binaries/aube-notes",
+      "binaries/aube-dictate",
+      "binaries/aube-diarizer"
+    ],
     "resources": {
       "models/diarizer/": "models/diarizer/"
     },
@@ -36,6 +41,9 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "entitlements": "Entitlements.plist"
+    }
   }
 }
