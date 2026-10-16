@@ -55,6 +55,7 @@ fn your_lines_come_first_and_points_that_repeat_them_are_dropped() {
     let combined = Combined {
         overview: "Hiring plans.".into(),
         sections: vec![placed("Hiring", &[0], &[0])],
+        rewritten: vec!["Hire two engineers".into()],
     };
     let summary = assemble(combined, &topics, &notes);
     let section = &summary.sections[0];
@@ -64,6 +65,28 @@ fn your_lines_come_first_and_points_that_repeat_them_are_dropped() {
         [
             ("Hire two engineers", Origin::Human),
             ("Interviews start next week.", Origin::Ai),
+        ]
+    );
+}
+
+#[test]
+fn a_note_reaches_the_summary_in_the_summarys_words() {
+    let topics = [topic("Budget", &["Spend less."])];
+    let notes = Notes {
+        lines: vec!["ask finance pls for q3 numbers asap".into()],
+        headings: Vec::new(),
+    };
+    let combined = Combined {
+        overview: String::new(),
+        sections: vec![placed("Budget", &[0], &[0])],
+        rewritten: vec!["Ask finance for the Q3 numbers.".into()],
+    };
+    let summary = assemble(combined, &topics, &notes);
+    assert_eq!(
+        lines(&summary.sections[0]),
+        [
+            ("Ask finance for the Q3 numbers.", Origin::Human),
+            ("Spend less.", Origin::Ai),
         ]
     );
 }
@@ -81,6 +104,7 @@ fn nothing_is_lost_when_the_model_skips_or_repeats_indices() {
     let combined = Combined {
         overview: String::new(),
         sections: vec![placed("Launch", &[0, 0, 9], &[1, 1])],
+        rewritten: Vec::new(),
     };
     let summary = assemble(combined, &topics, &notes);
     let headings: Vec<&str> = summary

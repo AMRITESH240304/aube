@@ -54,6 +54,8 @@ enum Missing {
 struct Combined {
     overview: String,
     sections: Vec<Placed>,
+    #[serde(default)]
+    rewritten: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -355,10 +357,14 @@ fn repeats(point: &str, note: &str) -> bool {
 }
 
 fn assemble(combined: Combined, topics: &[Topic], notes: &Notes) -> Summary {
+    let Combined {
+        overview,
+        sections: placed,
+        rewritten,
+    } = combined;
     let mut topics_used = vec![false; topics.len()];
     let mut notes_used = vec![false; notes.lines.len()];
-    let mut sections: Vec<(String, Vec<usize>, Vec<usize>)> = combined
-        .sections
+    let mut sections: Vec<(String, Vec<usize>, Vec<usize>)> = placed
         .into_iter()
         .map(|placed| {
             let topic_ids = claim(placed.topics, &mut topics_used);
@@ -383,7 +389,10 @@ fn assemble(combined: Combined, topics: &[Topic], notes: &Notes) -> Summary {
         .into_iter()
         .filter(|(_, topic_ids, note_ids)| !topic_ids.is_empty() || !note_ids.is_empty())
         .map(|(heading, topic_ids, note_ids)| {
-            let mine: Vec<&str> = note_ids.iter().map(|&i| notes.lines[i].as_str()).collect();
+            let mine: Vec<&str> = note_ids
+                .iter()
+                .map(|&i| rewritten.get(i).map_or(notes.lines[i].as_str(), String::as_str))
+                .collect();
             let theirs = topic_ids
                 .iter()
                 .flat_map(|&i| &topics[i].points)
@@ -417,7 +426,7 @@ fn assemble(combined: Combined, topics: &[Topic], notes: &Notes) -> Summary {
         })
         .collect();
     Summary {
-        overview: combined.overview,
+        overview,
         sections,
         skipped: Vec::new(),
     }
