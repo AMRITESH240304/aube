@@ -138,35 +138,53 @@ enum Phase {
 }
 
 final class Overlay: ObservableObject {
+    static let bars = 11
+
     @Published var expanded = false
     @Published var phase = Phase.listening
     @Published var heard = ""
     @Published var tidied = ""
-    @Published var level: CGFloat = 0
+    @Published var levels = [CGFloat](repeating: 0, count: Overlay.bars)
     @Published var note: String?
     @Published var notch = CGSize(width: 200, height: 32)
+
+    func hear(_ level: CGFloat) {
+        levels = Array(levels.dropFirst()) + [level]
+    }
+
+    func quiet() {
+        levels = [CGFloat](repeating: 0, count: Overlay.bars)
+    }
 }
 
-struct Column: View {
-    let title: String
-    let text: String
-    let placeholder: String
-    let bright: Bool
+struct BlinkingDot: View {
+    let color: Color
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.4))
-                .textCase(.uppercase)
-            Text(text.isEmpty ? placeholder : text)
-                .font(.system(size: 13))
-                .foregroundStyle(.white.opacity(text.isEmpty ? 0.3 : bright ? 0.95 : 0.6))
-                .lineLimit(4)
-                .truncationMode(.head)
-                .frame(maxWidth: .infinity, alignment: .leading)
+        TimelineView(.animation(minimumInterval: 1 / 30)) { context in
+            let phase = context.date.timeIntervalSinceReferenceDate * 2 * .pi / 1.1
+            Circle()
+                .fill(color)
+                .frame(width: 7, height: 7)
+                .opacity(0.3 + 0.7 * (0.5 + 0.5 * cos(phase)))
         }
-        .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+}
+
+struct Visualizer: View {
+    let levels: [CGFloat]
+    let height: CGFloat
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 3.5) {
+            ForEach(levels.indices, id: \.self) { index in
+                Capsule()
+                    .fill(.white.opacity(0.9))
+                    .frame(width: 5, height: 6 + sqrt(min(levels[index], 1)) * (height - 6))
+            }
+        }
+        .frame(height: height)
+        .animation(.easeOut(duration: 0.12), value: levels)
     }
 }
 
@@ -182,52 +200,77 @@ struct NotchView: View {
         }
     }
 
+    var shown: String {
+        switch overlay.phase {
+        case .listening: overlay.heard
+        case .tidying, .done: overlay.tidied.isEmpty ? overlay.heard : overlay.tidied
+        }
+    }
+
+    var placeholder: String {
+        overlay.phase == .listening ? "Start talking…" : "…"
+    }
+
+    var expandedHeight: CGFloat {
+        overlay.notch.height + 86
+    }
+
+    var sideWidth: CGFloat {
+        (size.width - overlay.notch.width) / 2
+    }
+
     var body: some View {
         ZStack(alignment: .top) {
             UnevenRoundedRectangle(bottomLeadingRadius: overlay.expanded ? 24 : 12, bottomTrailingRadius: overlay.expanded ? 24 : 12)
                 .fill(.black)
             if overlay.expanded {
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(overlay.phase == .listening ? Color.red : Color.white.opacity(0.5))
-                            .frame(width: 7, height: 7)
-                            .scaleEffect(overlay.phase == .listening ? 1 + overlay.level * 0.8 : 1)
-                        Text(status)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.6))
-                        Spacer()
+                VStack(spacing: 0) {
+                    HStack(spacing: 0) {
+                        HStack(spacing: 6) {
+                            BlinkingDot(color: overlay.phase == .listening ? .red : .white.opacity(0.6))
+                            Text(status)
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(.white.opacity(0.75))
+                                .contentTransition(.opacity)
+                        }
+                        .frame(width: sideWidth)
+                        Color.clear.frame(width: overlay.notch.width)
+                        Visualizer(levels: overlay.levels, height: max(overlay.notch.height - 2, 22))
+                            .frame(width: sideWidth)
+                            .opacity(overlay.phase == .listening ? 1 : 0.35)
+                    }
+                    .frame(height: overlay.notch.height)
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(shown.isEmpty ? placeholder : shown)
+                            .font(.system(size: 14))
+                            .foregroundStyle(.white.opacity(shown.isEmpty ? 0.35 : overlay.phase == .listening ? 0.7 : 0.95))
+                            .lineLimit(3)
+                            .truncationMode(.head)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .id(overlay.phase == .listening)
+                            .transition(.asymmetric(insertion: .opacity.combined(with: .move(edge: .bottom)), removal: .opacity))
                         if let note = overlay.note {
                             Text(note)
                                 .font(.system(size: 11))
-                                .foregroundStyle(.white.opacity(0.45))
+                                .foregroundStyle(.white.opacity(0.4))
                                 .lineLimit(1)
                         }
                     }
-                    HStack(alignment: .top, spacing: 16) {
-                        Column(title: "You said", text: overlay.heard, placeholder: "Start talking…", bright: false)
-                        Rectangle().fill(.white.opacity(0.12)).frame(width: 1)
-                        Column(
-                            title: "Tidied up",
-                            text: overlay.tidied,
-                            placeholder: overlay.note == nil ? "…" : "Will paste what you said",
-                            bright: true
-                        )
-                    }
+                    .padding(.horizontal, 24)
+                    .padding(.top, 10)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
-                .padding(.top, overlay.notch.height + 8)
-                .padding(.horizontal, 20)
-                .padding(.bottom, 14)
-                .transition(.opacity)
+                .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
             }
         }
         .frame(
             width: overlay.expanded ? size.width : overlay.notch.width,
-            height: overlay.expanded ? size.height : overlay.notch.height
+            height: overlay.expanded ? expandedHeight : overlay.notch.height
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .animation(.spring(response: 0.38, dampingFraction: 0.82), value: overlay.expanded)
-        .animation(.easeOut(duration: 0.12), value: overlay.level)
+        .animation(.easeInOut(duration: 0.25), value: overlay.phase == .listening)
     }
 }
 
@@ -464,13 +507,14 @@ final class Dictation {
         notch.overlay.heard = ""
         notch.overlay.tidied = ""
         notch.overlay.phase = .listening
+        notch.overlay.quiet()
         notch.overlay.note = cleanup ? cleanupUnavailableReason() : nil
         do {
             listening = try Listening(
                 locale: locale,
                 format: format,
                 onHeard: { [weak self] listening in self?.notch.overlay.heard = listening.heardText },
-                onLevel: { [weak self] level in self?.notch.overlay.level = level }
+                onLevel: { [weak self] level in self?.notch.overlay.hear(level) }
             )
         } catch {
             status.error = error.localizedDescription
@@ -498,6 +542,7 @@ final class Dictation {
         }
         finishing = true
         notch.overlay.phase = .tidying
+        notch.overlay.quiet()
         Task {
             let heard = await listening.finish()
             notch.overlay.heard = heard
