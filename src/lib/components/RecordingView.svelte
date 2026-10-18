@@ -183,7 +183,7 @@
         <SummaryView {summary} />
       {:else}
         <p class="py-6 text-sm text-zinc-500">
-          No summary yet. Aube writes one with Apple Intelligence from the transcript and your notes.
+          No summary yet. Aube writes one from the transcript and your notes using the model in Settings.
         </p>
       {/if}
     </div>

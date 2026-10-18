@@ -1,4 +1,5 @@
 use super::*;
+use crate::llm;
 
 fn settings(key: &str, cleanup: bool) -> Settings {
     Settings {
@@ -7,25 +8,56 @@ fn settings(key: &str, cleanup: bool) -> Settings {
     }
 }
 
+fn apple() -> llm::Settings {
+    llm::Settings::default()
+}
+
 #[test]
 fn off_and_unknown_keys_start_nothing() {
-    assert_eq!(Settings::default().arguments(None, true), None);
-    assert_eq!(settings("caps-lock", true).arguments(None, true), None);
+    assert_eq!(Settings::default().arguments(None, true, &apple()), None);
+    assert_eq!(
+        settings("caps-lock", true).arguments(None, true, &apple()),
+        None
+    );
 }
 
 #[test]
 fn the_helper_gets_the_key_language_and_cleanup_choice() {
     assert_eq!(
         settings("fn", true)
-            .arguments(Some("hi-IN".into()), false)
+            .arguments(Some("hi-IN".into()), false, &apple())
             .unwrap(),
-        ["--key", "fn", "--language", "hi-IN"]
+        ["--key", "fn", "--language", "hi-IN", "--llm", "apple"]
     );
     assert_eq!(
         settings("right-option", false)
-            .arguments(None, true)
+            .arguments(None, true, &apple())
             .unwrap(),
         ["--key", "right-option", "--no-cleanup", "--ask-for-access"]
+    );
+}
+
+#[test]
+fn ollama_gets_its_address_and_model() {
+    let ollama = llm::Settings {
+        provider: llm::Provider::Ollama,
+        url: "http://127.0.0.1:11434".into(),
+        model: "llama3.2".into(),
+    };
+    assert_eq!(
+        settings("fn", true)
+            .arguments(None, false, &ollama)
+            .unwrap(),
+        [
+            "--key",
+            "fn",
+            "--llm",
+            "ollama",
+            "--ollama-url",
+            "http://127.0.0.1:11434",
+            "--ollama-model",
+            "llama3.2"
+        ]
     );
 }
 

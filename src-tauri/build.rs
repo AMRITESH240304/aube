@@ -10,9 +10,12 @@ fn main() {
             }
         }
     }
-    build_sidecar("stt/main.swift", "aube-stt");
-    build_sidecar("notes/main.swift", "aube-notes");
-    build_sidecar("dictate/main.swift", "aube-dictate");
+    build_sidecar(&["stt/main.swift"], "aube-stt");
+    build_sidecar(&["shared/Ollama.swift", "notes/main.swift"], "aube-notes");
+    build_sidecar(
+        &["shared/Ollama.swift", "dictate/main.swift"],
+        "aube-dictate",
+    );
     build_diarizer();
     fetch_speaker_models();
     fetch_language_model();
@@ -68,9 +71,11 @@ fn sha256_of(path: &str) -> Option<String> {
     })
 }
 
-// Compiles a single-file Swift sidecar that Tauri bundles (`externalBin`).
-fn build_sidecar(source: &str, name: &str) {
-    println!("cargo:rerun-if-changed={source}");
+// Compiles a Swift sidecar that Tauri bundles (`externalBin`).
+fn build_sidecar(sources: &[&str], name: &str) {
+    for source in sources {
+        println!("cargo:rerun-if-changed={source}");
+    }
     let target = std::env::var("TARGET").unwrap();
     let arch = target
         .split('-')
@@ -78,14 +83,17 @@ fn build_sidecar(source: &str, name: &str) {
         .unwrap()
         .replace("aarch64", "arm64");
     std::fs::create_dir_all("binaries").unwrap();
-    let status = std::process::Command::new("xcrun")
+    let mut command = std::process::Command::new("xcrun");
+    command
         .args(["swiftc", "-O", "-swift-version", "5", "-target"])
-        .arg(format!("{arch}-apple-macos26.0"))
-        .args([source, "-o"])
+        .arg(format!("{arch}-apple-macos26.0"));
+    command.args(sources);
+    let status = command
+        .arg("-o")
         .arg(format!("binaries/{name}-{target}"))
         .status()
         .expect("xcrun not found: install the Xcode command line tools");
-    assert!(status.success(), "compiling {source} failed");
+    assert!(status.success(), "compiling {sources:?} failed");
 }
 
 fn build_diarizer() {

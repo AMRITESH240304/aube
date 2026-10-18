@@ -13,7 +13,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::{
     err,
     library::{Batch, Db, Segment},
-    Result,
+    llm, Result,
 };
 
 pub const BATCH_SECS: f64 = 300.0;
@@ -107,15 +107,18 @@ pub struct Batches {
     recording: String,
     next: f64,
     running: Vec<JoinHandle<()>>,
+    llm: llm::Settings,
 }
 
 impl Batches {
     pub fn new(app: AppHandle, recording: String, recorded_secs: f64) -> Self {
+        let llm = llm::settings(&app);
         Self {
             app,
             recording,
             next: recorded_secs,
             running: Vec::new(),
+            llm,
         }
     }
 
@@ -126,9 +129,10 @@ impl Batches {
         }
         let lines = transcript(start, end);
         let (app, recording) = (self.app.clone(), self.recording.clone());
+        let llm = self.llm.clone();
         self.running.push(thread::spawn(move || {
             let _one_at_a_time = one_at_a_time();
-            if let Err(e) = summarise_batch(&app, &recording, start, end, lines) {
+            if let Err(e) = summarise_batch(&app, &recording, start, end, lines, &llm) {
                 eprintln!("couldn't summarise {start}-{end}s of {recording}: {e}");
             }
         }));
@@ -136,18 +140,18 @@ impl Batches {
     }
 
     pub fn finish(self) {
-        write(self.app, self.recording, self.running);
+        write(self.app, self.recording, self.running, self.llm);
     }
 }
 
-pub fn write(app: AppHandle, recording: String, running: Vec<JoinHandle<()>>) {
+pub fn write(app: AppHandle, recording: String, running: Vec<JoinHandle<()>>, llm: llm::Settings) {
     thread::spawn(move || {
         for batch in running {
             let _ = batch.join();
         }
         let _one_at_a_time = one_at_a_time();
         announce(&app, &recording, true, None);
-        let error = summarise(&app, &recording).err();
+        let error = summarise(&app, &recording, &llm).err();
         announce(&app, &recording, false, error);
     });
 }
@@ -159,12 +163,24 @@ fn announce(app: &AppHandle, recording: &str, working: bool, error: Option<Strin
     );
 }
 
-fn ask<T: DeserializeOwned>(mode: &str, request: &Value) -> Result<T> {
+fn ask<T: DeserializeOwned>(mode: &str, request: &Value, llm: &llm::Settings) -> Result<T> {
     let program = std::env::current_exe()
         .map_err(err)?
         .with_file_name("aube-notes");
-    let mut child = Command::new(program)
-        .arg(mode)
+    let mut command = Command::new(program);
+    command.arg(mode);
+    if llm.provider == llm::Provider::Ollama {
+        if llm.model.trim().is_empty() {
+            return Err("Choose an Ollama model in Settings.".to_owned());
+        }
+        command.args([
+            "--ollama-url",
+            llm.url.trim_end_matches('/'),
+            "--ollama-model",
+            llm.model.trim(),
+        ]);
+    }
+    let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
@@ -190,6 +206,7 @@ fn summarise_batch(
     start: f64,
     end: f64,
     transcript: Vec<String>,
+    llm: &llm::Settings,
 ) -> Result<()> {
     let db = app.state::<Db>();
     let found = if transcript.is_empty() {
@@ -202,6 +219,7 @@ fn summarise_batch(
         ask::<Topics>(
             "batch",
             &json!({ "transcript": transcript, "notes": notes }),
+            llm,
         )?
     };
     let batch = Batch {
@@ -209,31 +227,35 @@ fn summarise_batch(
         end,
         topics: serde_json::to_string(&found.topics).map_err(err)?,
         declined: found.declined,
+        source: llm.source(),
     };
     db.add_batch(recording, &batch)
 }
 
-fn summarise(app: &AppHandle, recording: &str) -> Result<()> {
+fn summarise(app: &AppHandle, recording: &str, llm: &llm::Settings) -> Result<()> {
     let db = app.state::<Db>();
     let (title, duration) = db.recording(recording)?;
     let segments = db.segments(recording)?;
+    let source = llm.source();
     let covered: Vec<(f64, f64)> = db
         .batches(recording)?
-        .into_iter()
+        .iter()
+        .filter(|batch| batch.source == source)
         .map(|batch| (batch.start, batch.end))
         .collect();
     let mut missing = Vec::new();
     let mut first_error = None;
     for (start, end) in gaps(&covered, duration) {
         let transcript = transcript_between(&segments, start, end);
-        if let Err(e) = summarise_batch(app, recording, start, end, transcript) {
+        if let Err(e) = summarise_batch(app, recording, start, end, transcript, llm) {
             eprintln!("couldn't summarise {start}-{end}s of {recording}: {e}");
             missing.push((start, end, Missing::Whole));
             first_error.get_or_insert(e);
         }
     }
     let mut topics: Vec<Topic> = Vec::new();
-    for batch in db.batches(recording)? {
+    let batches = db.batches(recording)?;
+    for batch in batches.iter().filter(|batch| batch.source == source) {
         let found: Vec<Topic> = serde_json::from_str(&batch.topics).unwrap_or_default();
         if batch.declined {
             let kind = if found.is_empty() {
@@ -249,7 +271,7 @@ fn summarise(app: &AppHandle, recording: &str) -> Result<()> {
         return match first_error {
             Some(e) => Err(e),
             None if !missing.is_empty() => {
-                Err("Apple Intelligence declined to summarise this meeting.".to_owned())
+                Err("The summary model declined to summarise this meeting.".to_owned())
             }
             None => Ok(()),
         };
@@ -258,6 +280,7 @@ fn summarise(app: &AppHandle, recording: &str) -> Result<()> {
     let combined: Combined = ask(
         "combine",
         &json!({ "title": title, "topics": topics, "notes": notes.lines, "headings": notes.headings }),
+        llm,
     )?;
     let mut summary = assemble(combined, &topics, &notes);
     summary.skipped = describe_missing(missing);
@@ -391,7 +414,11 @@ fn assemble(combined: Combined, topics: &[Topic], notes: &Notes) -> Summary {
         .map(|(heading, topic_ids, note_ids)| {
             let mine: Vec<&str> = note_ids
                 .iter()
-                .map(|&i| rewritten.get(i).map_or(notes.lines[i].as_str(), String::as_str))
+                .map(|&i| {
+                    rewritten
+                        .get(i)
+                        .map_or(notes.lines[i].as_str(), String::as_str)
+                })
                 .collect();
             let theirs = topic_ids
                 .iter()
@@ -440,7 +467,8 @@ pub fn summary(db: State<'_, Db>, id: String) -> Option<Summary> {
 
 #[tauri::command]
 pub fn summarize(app: AppHandle, id: String) {
-    write(app, id, Vec::new());
+    let llm = llm::settings(&app);
+    write(app, id, Vec::new(), llm);
 }
 
 #[cfg(test)]

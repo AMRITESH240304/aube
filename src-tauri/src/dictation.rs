@@ -11,7 +11,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use crate::{err, library::Db, stt, Result};
+use crate::{err, library::Db, llm, stt, Result};
 
 const SETTINGS: &str = "dictation";
 const OFF: &str = "off";
@@ -41,7 +41,12 @@ impl Default for Settings {
 }
 
 impl Settings {
-    pub fn arguments(&self, language: Option<String>, ask_for_access: bool) -> Option<Vec<String>> {
+    pub fn arguments(
+        &self,
+        language: Option<String>,
+        ask_for_access: bool,
+        llm: &llm::Settings,
+    ) -> Option<Vec<String>> {
         if self.key == OFF || !KEYS.contains(&self.key.as_str()) {
             return None;
         }
@@ -51,6 +56,18 @@ impl Settings {
         }
         if !self.cleanup {
             arguments.push("--no-cleanup".to_owned());
+        } else {
+            match llm.provider {
+                llm::Provider::Apple => arguments.extend(["--llm".to_owned(), "apple".to_owned()]),
+                llm::Provider::Ollama => arguments.extend([
+                    "--llm".to_owned(),
+                    "ollama".to_owned(),
+                    "--ollama-url".to_owned(),
+                    llm.url.clone(),
+                    "--ollama-model".to_owned(),
+                    llm.model.clone(),
+                ]),
+            }
         }
         if ask_for_access {
             arguments.push("--ask-for-access".to_owned());
@@ -110,7 +127,9 @@ pub fn start(app: &AppHandle) {
     let settings = settings(app);
     let ask_for_access =
         settings.key != OFF && !app.state::<Dictation>().asked_for_access.swap(true, SeqCst);
-    let Some(arguments) = settings.arguments(stt::your_language(app), ask_for_access) else {
+    let Some(arguments) =
+        settings.arguments(stt::your_language(app), ask_for_access, &llm::settings(app))
+    else {
         return report(app, None);
     };
     report(app, Some(Status::default()));
