@@ -153,6 +153,7 @@ fn summaries_read_notes_by_when_they_were_written() {
         end: start + 300.0,
         topics: topics.into(),
         declined,
+        source: "apple".into(),
     };
     db.add_batch("r", &batch(300.0, "[]", true)).unwrap();
     db.add_batch("r", &batch(0.0, "[1]", false)).unwrap();

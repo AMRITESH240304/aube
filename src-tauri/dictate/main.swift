@@ -47,6 +47,21 @@ func argument(_ name: String) -> String? {
     return arguments[index + 1]
 }
 
+let engine: OllamaEngine
+if argument("--llm") == "ollama" {
+    guard let raw = argument("--ollama-url"),
+          let url = URL(string: raw),
+          let scheme = url.scheme,
+          scheme == "http" || scheme == "https"
+    else {
+        emit(Status(error: "Ollama's address must start with http:// or https://."))
+        exit(1)
+    }
+    engine = .ollama(url, argument("--ollama-model") ?? "")
+} else {
+    engine = .apple
+}
+
 func makeRoom(for locale: Locale) async {
     let reserved = await AssetInventory.reservedLocales
     let wanted = locale.identifier(.bcp47)
@@ -86,11 +101,39 @@ let tidySchema = try! GenerationSchema(
     dependencies: []
 )
 
+struct Tidied: Decodable {
+    let tidied: String
+}
+
 func tidy(_ text: String) async -> String? {
-    let session = LanguageModelSession(instructions: tidyInstructions)
-    guard let reply = try? await session.respond(to: "Dictation: \(text)", schema: tidySchema, options: GenerationOptions(temperature: 0)),
-          let tidied = try? reply.content.value(String.self, forProperty: "tidied")
-    else { return nil }
+    let tidied: String
+    switch engine {
+    case .apple:
+        let session = LanguageModelSession(instructions: tidyInstructions)
+        guard let reply = try? await session.respond(
+            to: "Dictation: \(text)",
+            schema: tidySchema,
+            options: GenerationOptions(temperature: 0)
+        ),
+        let cleaned = try? reply.content.value(String.self, forProperty: "tidied")
+        else { return nil }
+        tidied = cleaned
+    case .ollama(let url, let model):
+        guard !model.isEmpty else { return nil }
+        do {
+            let reply = try await Ollama.chat(
+                base: url,
+                model: model,
+                instructions: tidyInstructions,
+                prompt: "Dictation: \(text)",
+                shape: #"{"tidied":"the tidied dictation"}"#,
+                temperature: 0
+            )
+            tidied = try JSONDecoder().decode(Tidied.self, from: Data(reply.utf8)).tidied
+        } catch {
+            return nil
+        }
+    }
     let trimmed = tidied.trimmingCharacters(in: .whitespacesAndNewlines)
     return trimmed.isEmpty ? nil : trimmed
 }
@@ -414,6 +457,7 @@ final class Listening {
 final class Dictation {
     let key: TalkKey
     let cleanup: Bool
+    let engine: OllamaEngine
     let notch = Notch()
     var status = Status()
     var locale = Locale.current
@@ -424,9 +468,10 @@ final class Dictation {
     var revealing: DispatchWorkItem?
     var finishing = false
 
-    init(key: TalkKey, cleanup: Bool) {
+    init(key: TalkKey, cleanup: Bool, engine: OllamaEngine) {
         self.key = key
         self.cleanup = cleanup
+        self.engine = engine
     }
 
     func report() {
@@ -455,7 +500,16 @@ final class Dictation {
             let usage = UserDefaults(suiteName: "com.apple.HIToolbox")?.object(forKey: "AppleFnUsageType") as? Int
             status.fnConflict = usage != 0
         }
-        status.cleanup = cleanup ? cleanupUnavailableReason() : nil
+        if cleanup {
+            switch engine {
+            case .apple:
+                status.cleanup = cleanupUnavailableReason()
+            case .ollama(_, let model):
+                status.cleanup = model.isEmpty ? "Choose an Ollama model in Settings." : nil
+            }
+        } else {
+            status.cleanup = nil
+        }
         status.ready = format != nil
         checkAccessibility(prompt: askForAccess)
     }
@@ -508,7 +562,7 @@ final class Dictation {
         notch.overlay.tidied = ""
         notch.overlay.phase = .listening
         notch.overlay.quiet()
-        notch.overlay.note = cleanup ? cleanupUnavailableReason() : nil
+        notch.overlay.note = cleanup ? status.cleanup : nil
         do {
             listening = try Listening(
                 locale: locale,
@@ -520,7 +574,7 @@ final class Dictation {
             status.error = error.localizedDescription
             return report()
         }
-        if cleanup && notch.overlay.note == nil {
+        if cleanup && notch.overlay.note == nil, case .apple = engine {
             LanguageModelSession(instructions: tidyInstructions).prewarm()
         }
         let reveal = DispatchWorkItem { [weak self] in self?.notch.show() }
@@ -547,7 +601,14 @@ final class Dictation {
             let heard = await listening.finish()
             notch.overlay.heard = heard
             var text = heard
-            if cleanup, notch.overlay.note == nil, !heard.isEmpty, let tidied = await within(4, { await tidy(heard) }) {
+            let tidyTimeout: Double
+            if case .ollama = engine {
+                tidyTimeout = 20
+            } else {
+                tidyTimeout = 4
+            }
+            if cleanup, notch.overlay.note == nil, !heard.isEmpty,
+               let tidied = await within(tidyTimeout, { await tidy(heard) }) {
                 notch.overlay.tidied = tidied
                 text = tidied
             }
@@ -589,7 +650,11 @@ Thread.detachNewThread {
 MainActor.assumeIsolated {
     let app = NSApplication.shared
     app.setActivationPolicy(.accessory)
-    let dictation = Dictation(key: key, cleanup: !CommandLine.arguments.contains("--no-cleanup"))
+    let dictation = Dictation(
+        key: key,
+        cleanup: !CommandLine.arguments.contains("--no-cleanup"),
+        engine: engine
+    )
     let askForAccess = CommandLine.arguments.contains("--ask-for-access")
     Task { await dictation.prepare(language: argument("--language"), askForAccess: askForAccess) }
     app.run()

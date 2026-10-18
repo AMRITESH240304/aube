@@ -4,6 +4,7 @@ mod dictation;
 mod echo;
 mod library;
 mod lid;
+mod llm;
 mod mixer;
 #[cfg(target_os = "macos")]
 mod permission;
@@ -49,6 +50,9 @@ pub fn run() {
             dictation::open_system_settings,
             stt::transcription_languages,
             stt::install_language,
+            llm::llm,
+            llm::set_llm,
+            llm::ollama_models,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

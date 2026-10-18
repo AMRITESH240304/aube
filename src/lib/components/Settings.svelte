@@ -1,8 +1,68 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { invoke } from "@tauri-apps/api/core";
   import { dictation, TALK_KEYS } from "$lib/dictation.svelte";
 
-  onMount(() => dictation.init());
+  type LlmProvider = "apple" | "ollama";
+  type LlmSettings = { provider: LlmProvider; url: string; model: string };
+
+  let llm = $state<LlmSettings>({
+    provider: "apple",
+    url: "http://127.0.0.1:11434",
+    model: "",
+  });
+  let models = $state<string[]>([]);
+  let llmError = $state("");
+  let loadingModels = $state(false);
+  let savingLlm = $state(false);
+  const PROVIDERS: { value: LlmProvider; label: string; hint: string }[] = [
+    { value: "apple", label: "Apple Intelligence", hint: "Runs on this Mac" },
+    { value: "ollama", label: "Ollama", hint: "Your own models" },
+  ];
+
+  async function loadLlm() {
+    try {
+      llm = await invoke<LlmSettings>("llm");
+      if (llm.provider === "ollama") await refreshModels();
+    } catch (e) {
+      llmError = String(e);
+    }
+  }
+
+  async function saveLlm(change: Partial<LlmSettings>) {
+    const next = { ...llm, ...change };
+    savingLlm = true;
+    llmError = "";
+    try {
+      await invoke("set_llm", { settings: next });
+      llm = next;
+    } catch (e) {
+      llmError = String(e);
+    }
+    savingLlm = false;
+  }
+
+  async function refreshModels() {
+    loadingModels = true;
+    llmError = "";
+    try {
+      models = await invoke<string[]>("ollama_models", { url: llm.url });
+    } catch (e) {
+      models = [];
+      llmError = String(e);
+    }
+    loadingModels = false;
+  }
+
+  async function choose(provider: LlmProvider) {
+    await saveLlm({ provider });
+    if (llm.provider === "ollama") await refreshModels();
+  }
+
+  onMount(() => {
+    dictation.init();
+    loadLlm();
+  });
 
   const chosen = $derived(TALK_KEYS.find((k) => k.key === dictation.settings.key) ?? TALK_KEYS[0]);
   const status = $derived(dictation.status);
@@ -28,6 +88,101 @@
 {/snippet}
 
 <h2 class="mb-6 text-xl font-semibold">Settings</h2>
+
+<section aria-labelledby="intelligence-heading" class="mb-8 space-y-4">
+  <div>
+    <h3 id="intelligence-heading" class="font-semibold">Intelligence</h3>
+    <p class="mt-1 text-sm text-zinc-500">
+      Choose the model that writes meeting summaries and tidies push-to-talk dictation.
+    </p>
+  </div>
+
+  <fieldset>
+    <legend class="mb-2 text-sm font-medium">Model source</legend>
+    <div class="grid grid-cols-2 gap-2">
+      {#each PROVIDERS as option (option.value)}
+        {@const selected = llm.provider === option.value}
+        <label
+          class={[
+            "flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2 text-sm focus-within:outline-2 focus-within:outline-blue-600",
+            selected
+              ? "border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900"
+              : "border-zinc-300 hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800",
+          ]}
+        >
+          <input
+            type="radio"
+            name="llm-provider"
+            class="sr-only"
+            value={option.value}
+            checked={selected}
+            disabled={savingLlm}
+            onchange={() => choose(option.value)}
+          />
+          <span>
+            <span class="font-medium">{option.label}</span>
+            <span class:opacity-60={selected} class="block text-xs">{option.hint}</span>
+          </span>
+        </label>
+      {/each}
+    </div>
+  </fieldset>
+
+  {#if llm.provider === "ollama"}
+    <div class="space-y-3 rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
+      <label class="block text-sm">
+        <span class="mb-1 block font-medium">Ollama address</span>
+        <input
+          class="w-full rounded-md border border-zinc-300 bg-transparent px-2 py-1.5 focus-visible:outline-2 focus-visible:outline-blue-600 dark:border-zinc-700"
+          bind:value={llm.url}
+          onchange={() => saveLlm({ url: llm.url }).then(refreshModels)}
+          placeholder="http://127.0.0.1:11434"
+          spellcheck="false"
+        />
+      </label>
+
+      <label class="block text-sm">
+        <span class="mb-1 block font-medium">Model</span>
+        <div class="flex gap-2">
+          <input
+            class="min-w-0 flex-1 rounded-md border border-zinc-300 bg-transparent px-2 py-1.5 focus-visible:outline-2 focus-visible:outline-blue-600 dark:border-zinc-700"
+            bind:value={llm.model}
+            onchange={() => saveLlm({ model: llm.model })}
+            list="ollama-models"
+            placeholder="llama3.2"
+            spellcheck="false"
+          />
+          <datalist id="ollama-models">
+            {#each models as model (model)}
+              <option value={model}></option>
+            {/each}
+          </datalist>
+          <button class="btn shrink-0 py-1 text-xs" onclick={refreshModels} disabled={loadingModels}>
+            {loadingModels ? "Checking…" : "Refresh"}
+          </button>
+        </div>
+        {#if !llm.model}
+          <span class="mt-1 block text-xs text-amber-700 dark:text-amber-300">
+            Choose a chat model from the list, or type its name.
+          </span>
+        {/if}
+      </label>
+
+      <p class="text-xs text-zinc-500">
+        Summaries and dictation cleanup use this model. Transcripts and typed notes are sent to the
+        Ollama server; audio is not.
+      </p>
+    </div>
+  {:else}
+    <p class="text-xs text-zinc-500">
+      Summaries and dictation cleanup run on this Mac with Apple Intelligence.
+    </p>
+  {/if}
+
+  {#if llmError}
+    {@render notice(llmError, "error")}
+  {/if}
+</section>
 
 <section aria-labelledby="talk-heading" class="space-y-5">
   <div>
@@ -77,11 +232,20 @@
       onchange={(e) => dictation.update({ cleanup: e.currentTarget.checked })}
     />
     <span>
-      <span class="font-medium">Tidy up with Apple Intelligence</span>
-      <span class="block text-zinc-500">
-        Removes "um"s and repeated words, applies corrections like "no, Wednesday", and fixes punctuation. Runs on this
-        Mac.
+      <span class="font-medium">
+        Tidy up with {llm.provider === "ollama" ? "Ollama" : "Apple Intelligence"}
       </span>
+      {#if llm.provider === "ollama"}
+        <span class="block text-zinc-500">
+          Uses {llm.model || "your chosen Ollama model"} to remove fillers, apply corrections, and fix
+          punctuation before pasting.
+        </span>
+      {:else}
+        <span class="block text-zinc-500">
+          Removes "um"s and repeated words, applies corrections like "no, Wednesday", and fixes punctuation. Runs on this
+          Mac.
+        </span>
+      {/if}
     </span>
   </label>
 

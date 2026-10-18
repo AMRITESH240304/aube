@@ -15,8 +15,8 @@
   ];
 </script>
 
-<div role="status" aria-label="Writing the summary on this Mac" class="py-1">
-  <span class="sr-only">Writing the summary on this Mac…</span>
+<div role="status" aria-label="Writing the summary" class="py-1">
+  <span class="sr-only">Writing the summary…</span>
   <div class="space-y-2.5" aria-hidden="true">
     {#each rows as row, i (i)}
       <div

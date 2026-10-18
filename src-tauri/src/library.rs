@@ -90,10 +90,11 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 ";
 
-const ADDED_COLUMNS: [(&str, &str, &str); 3] = [
+const ADDED_COLUMNS: [(&str, &str, &str); 4] = [
     ("segments", "source", "TEXT"),
     ("segments", "words", "TEXT"),
     ("summary_batches", "declined", "INTEGER NOT NULL DEFAULT 0"),
+    ("summary_batches", "source", "TEXT"),
 ];
 
 const MERGE_EDITS_MS: i64 = 5_000;
@@ -141,6 +142,7 @@ pub struct Batch {
     pub end: f64,
     pub topics: String,
     pub declined: bool,
+    pub source: String,
 }
 
 #[derive(Serialize)]
@@ -328,7 +330,8 @@ impl Db {
         let connection = self.connection();
         let mut query = connection
             .prepare(
-                "SELECT start_secs, end_secs, topics, declined FROM summary_batches
+                "SELECT start_secs, end_secs, topics, declined, COALESCE(source, 'apple')
+                 FROM summary_batches
                  WHERE recording_id = ?1 ORDER BY start_secs",
             )
             .map_err(err)?;
@@ -339,6 +342,7 @@ impl Db {
                     end: row.get(1)?,
                     topics: row.get(2)?,
                     declined: row.get(3)?,
+                    source: row.get(4)?,
                 })
             })
             .map_err(err)?
@@ -351,9 +355,16 @@ impl Db {
         self.connection()
             .execute(
                 "INSERT OR REPLACE INTO summary_batches
-                    (recording_id, start_secs, end_secs, topics, declined)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![id, batch.start, batch.end, batch.topics, batch.declined],
+                    (recording_id, start_secs, end_secs, topics, declined, source)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    id,
+                    batch.start,
+                    batch.end,
+                    batch.topics,
+                    batch.declined,
+                    batch.source
+                ],
             )
             .map(drop)
             .map_err(err)

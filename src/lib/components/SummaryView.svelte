@@ -16,7 +16,7 @@
         <p>{line}</p>
       {/each}
       <p class="mt-1 text-amber-800/80 dark:text-amber-200/70">
-        Apple Intelligence declined these parts. The transcript still has everything that was said.
+        These parts couldn't be summarised. The transcript still has everything that was said.
       </p>
     </div>
   {/if}
