@@ -34,21 +34,9 @@ let audio: [Float] = data.withUnsafeBytes { raw in
     raw.bindMemory(to: Int16.self).map { Float(Int16(littleEndian: $0)) / Float(Int16.max) }
 }
 
-let sampleRate = 16_000
-let shortAudioSeconds = 150
-
-func configuration(forSeconds seconds: Int) -> OfflineDiarizerConfig {
-    var config = OfflineDiarizerConfig.default
-    if seconds < shortAudioSeconds {
-        config.clustering.warmStartFa = 0.3
-        config.clustering.warmStartFb = 0.4
-    }
-    return config
-}
-
 do {
     ModelHub.offlineMode = true
-    let diarizer = OfflineDiarizerManager(config: configuration(forSeconds: audio.count / sampleRate))
+    let diarizer = OfflineDiarizerManager()
     diarizer.initialize(models: try await OfflineDiarizerModels.load(from: models))
     let result = try await diarizer.process(audio: audio)
     let segments = result.segments.map {
