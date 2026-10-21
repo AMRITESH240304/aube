@@ -151,3 +151,18 @@ fn learning_blends_voices_by_how_long_each_was_heard() {
     assert!((second.voice[0] - second.voice[1]).abs() < 1e-6);
     assert_eq!(second.seconds, 60.0);
 }
+
+#[test]
+fn a_line_away_from_every_turn_takes_the_nearest_voice_instead_of_staying_them() {
+    let call = diarization(vec![turn("S1", 0.0, 20.0), turn("S2", 40.0, 60.0)]);
+    let segments = [
+        call_segment(vec![word("Hello.", 25.0, 25.5)]),
+        call_segment(vec![word("Right.", 37.0, 37.4)]),
+    ];
+    let relabeled = relabel(&segments, Channel::Call, &call, &call.names(None, &[]), 0.0);
+    let speakers: Vec<&str> = relabeled
+        .iter()
+        .map(|s| s.speaker.as_deref().unwrap())
+        .collect();
+    assert_eq!(speakers, ["Speaker 1", "Speaker 2"]);
+}
