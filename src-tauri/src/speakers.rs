@@ -17,7 +17,6 @@ const MIC_SPEECH_FOR_IN_PERSON: f64 = 60.0;
 const MOST_CALL_SPEECH_IN_PERSON: f64 = 5.0;
 const LEAST_DIARIZED_SPEECH: f64 = 30.0;
 const SHORTEST_TURN: f64 = 0.25;
-const NEAREST_TURN: f64 = 1.0;
 
 const VOICEPRINT: &str = "voiceprint";
 const VOICEPRINT_MODEL: &str = "fluidaudio-0.17.7-offline";
@@ -252,12 +251,7 @@ fn speaker_at(turns: &[Turn], start: f64, end: f64) -> Option<&str> {
         .iter()
         .filter(|turn| overlap(turn) > 0.0)
         .max_by(|a, b| overlap(a).total_cmp(&overlap(b)))
-        .or_else(|| {
-            turns
-                .iter()
-                .filter(|turn| gap(turn) <= NEAREST_TURN)
-                .min_by(|a, b| gap(a).total_cmp(&gap(b)))
-        })
+        .or_else(|| turns.iter().min_by(|a, b| gap(a).total_cmp(&gap(b))))
         .map(|turn| turn.speaker.as_str())
 }
 
