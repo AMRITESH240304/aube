@@ -2,6 +2,7 @@
   import { onMount, tick } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { formatDuration, recorder, type Recording } from "$lib/recorder.svelte";
+  import { toMarkdown } from "$lib/markdown";
   import type { Summary } from "$lib/summary";
   import type { Transcript } from "$lib/transcript";
   import NoteEditor from "./NoteEditor.svelte";
@@ -14,6 +15,7 @@
   let transcript = $state<Transcript | null>(null);
   let error = $state("");
   let copied = $state(false);
+  let shared = $state<"copy" | "save" | null>(null);
   let renaming = $state(false);
   let title = $state("");
   let confirmDelete = $state(false);
@@ -93,6 +95,16 @@
     setTimeout(() => (copied = false), 1500);
   }
 
+  async function share(save: boolean) {
+    const notes = await invoke<string | null>("note_markdown", { recordingId: recording.id }).catch(() => null);
+    const markdown = toMarkdown(recording, summary, notes);
+    if (save) await run(() => invoke("save_markdown", { title: recording.title, markdown }));
+    else await navigator.clipboard.writeText(markdown);
+    if (actionError) return;
+    shared = save ? "save" : "copy";
+    setTimeout(() => (shared = null), 1500);
+  }
+
   function onKeydown(e: KeyboardEvent) {
     if (e.key !== "Escape" || (e.target as HTMLElement).isContentEditable) return;
     if (renaming) renaming = false;
@@ -135,6 +147,8 @@
           </p>
         </div>
         {#if !renaming && !confirmDelete}
+          <button class="btn" onclick={() => share(false)} disabled={busy}>{shared === "copy" ? "Copied" : "Copy .md"}</button>
+          <button class="btn" onclick={() => share(true)} disabled={busy}>{shared === "save" ? "Saved to Downloads" : "Save .md"}</button>
           <button class="btn" onclick={() => ((title = recording.title), (renaming = true))}>Rename</button>
           <button class="btn text-red-700 dark:text-red-400" onclick={() => (confirmDelete = true)}>Delete…</button>
         {/if}
