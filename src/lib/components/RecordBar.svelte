@@ -16,8 +16,8 @@
     if (id) onSaved(id);
   }
 
-  async function start() {
-    if (await recorder.start(continuing)) onStarted();
+  async function start(from?: Recording) {
+    if (await recorder.start(from)) onStarted();
   }
 </script>
 
@@ -90,11 +90,16 @@
       <button
         class="btn-primary px-4 py-2"
         disabled={recorder.installing}
-        onclick={start}
+        onclick={() => start(continuing)}
       >
         <span class="ember size-2.5 rounded-full" aria-hidden="true"></span>
         {recorder.installing ? "Downloading…" : continuing ? "Continue recording" : "Start recording"}
       </button>
+      {#if continuing}
+        <button class="btn px-4 py-2" disabled={recorder.installing} onclick={() => start()}>
+          <span aria-hidden="true">＋</span>New note
+        </button>
+      {/if}
     {/if}
   </div>
 </div>
