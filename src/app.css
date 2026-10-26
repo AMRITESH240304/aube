@@ -1,21 +1,113 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --color-zinc-50: #f5f1fb;
+  --color-zinc-100: #e9e2f4;
+  --color-zinc-200: #d4c9e6;
+  --color-zinc-300: #b4a7cc;
+  --color-zinc-400: #9282ae;
+  --color-zinc-500: #73638e;
+  --color-zinc-600: #574a6f;
+  --color-zinc-700: #3c3253;
+  --color-zinc-800: #271f38;
+  --color-zinc-900: #181226;
+  --color-zinc-950: #0c0815;
+  --color-emerald-500: #7dffcf;
+  --color-blue-600: #b48cff;
+  --color-red-500: #ff5a3c;
+  --color-red-600: #e2361f;
+  --color-red-700: #c22a17;
+  --font-haunt: "Iowan Old Style", "Baskerville", "Palatino", serif;
+  --spectral: 180 140 255;
+  --ember: 255 90 60;
+}
+
 @layer base {
   html {
-    color-scheme: light dark;
+    color-scheme: dark;
   }
 
   body {
-    @apply bg-white text-zinc-900 antialiased dark:bg-zinc-950 dark:text-zinc-100;
+    @apply text-zinc-100 antialiased;
+    background:
+      radial-gradient(60rem 40rem at 85% -10%, rgb(var(--spectral) / 0.16), transparent 60%),
+      radial-gradient(50rem 30rem at 0% 110%, rgb(120 255 207 / 0.06), transparent 60%),
+      var(--color-zinc-950);
+  }
+
+  body::before {
+    content: "";
+    position: fixed;
+    inset: -20%;
+    pointer-events: none;
+    background:
+      radial-gradient(30rem 12rem at 20% 30%, rgb(var(--spectral) / 0.07), transparent 70%),
+      radial-gradient(36rem 14rem at 75% 70%, rgb(200 190 255 / 0.05), transparent 70%);
+    filter: blur(20px);
+    animation: drift 60s ease-in-out infinite alternate;
+  }
+
+  h1,
+  h2 {
+    font-family: var(--font-haunt);
+    letter-spacing: 0.01em;
+    text-shadow: 0 0 22px rgb(var(--spectral) / 0.28);
+  }
+
+  ::selection {
+    background: rgb(var(--spectral) / 0.35);
   }
 }
 
 @utility btn {
-  @apply inline-flex items-center justify-center gap-2 rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium hover:bg-zinc-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800;
+  @apply inline-flex items-center justify-center gap-2 rounded-full border border-zinc-700 bg-zinc-900/60 px-3.5 py-1.5 text-sm font-medium text-zinc-100 backdrop-blur transition hover:border-zinc-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:opacity-50;
+  &:hover:not(:disabled) {
+    box-shadow: 0 0 18px rgb(var(--spectral) / 0.28);
+  }
 }
 
 @utility btn-primary {
-  @apply btn border-transparent bg-zinc-900 text-white hover:bg-zinc-700 dark:bg-white dark:text-zinc-900 dark:hover:bg-zinc-200;
+  @apply btn border-transparent text-zinc-950;
+  background: linear-gradient(180deg, #d9c6ff, #a985ff);
+  &:hover:not(:disabled) {
+    box-shadow: 0 0 22px rgb(var(--spectral) / 0.55);
+  }
+}
+
+@utility ember {
+  background: rgb(var(--ember));
+  box-shadow: 0 0 8px rgb(var(--ember) / 0.9);
+  animation: flicker 2.4s infinite;
+}
+
+@utility haunted-glow {
+  box-shadow:
+    0 0 0 1px rgb(var(--ember) / 0.35),
+    0 0 32px rgb(var(--ember) / 0.25);
+}
+
+@keyframes drift {
+  to {
+    transform: translate3d(6%, -4%, 0) scale(1.08);
+  }
+}
+
+@keyframes flicker {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  8% { opacity: 0.72; }
+  12% { opacity: 1; transform: scale(1.12); }
+  46% { opacity: 0.85; }
+  50% { opacity: 1; transform: scale(0.94); }
+  71% { opacity: 0.78; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body::before,
+  .ember {
+    animation: none;
+  }
 }
 
 @layer components {
