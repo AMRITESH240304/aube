@@ -678,6 +678,17 @@ pub fn note(db: State<'_, Db>, recording_id: String) -> Option<String> {
 }
 
 #[tauri::command]
+pub fn note_markdown(db: State<'_, Db>, recording_id: String) -> Option<String> {
+    db.connection()
+        .query_row(
+            "SELECT markdown FROM notes WHERE recording_id = ?1",
+            [recording_id],
+            |row| row.get(0),
+        )
+        .ok()
+}
+
+#[tauri::command]
 pub fn save_note(
     db: State<'_, Db>,
     recorder: State<'_, Recorder>,

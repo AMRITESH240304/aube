@@ -9,6 +9,7 @@ mod mixer;
 #[cfg(target_os = "macos")]
 mod permission;
 mod recorder;
+mod share;
 mod speakers;
 mod stt;
 mod summary;
@@ -42,6 +43,8 @@ pub fn run() {
             library::transcript,
             library::search_transcripts,
             library::note,
+            library::note_markdown,
+            share::save_markdown,
             library::save_note,
             summary::summary,
             summary::summarize,

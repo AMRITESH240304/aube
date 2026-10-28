@@ -33,9 +33,10 @@
     <div class="h-14 animate-pulse rounded-lg bg-zinc-100 dark:bg-zinc-900" aria-busy="true"></div>
   {:else if shown.length === 0}
     <div class="rounded-lg border border-dashed border-zinc-300 px-6 py-10 text-center dark:border-zinc-700">
-      <h3 class="font-semibold">No recordings yet</h3>
+      <p class="text-3xl" aria-hidden="true">👻</p>
+      <h3 class="mt-2 font-semibold">Nothing haunts these halls yet</h3>
       <p class="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-        Press Start recording when your meeting starts.
+        Press Start recording when your meeting starts, and every word will be kept.
       </p>
     </div>
   {:else}

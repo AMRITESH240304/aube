@@ -16,8 +16,8 @@
     if (id) onSaved(id);
   }
 
-  async function start() {
-    if (await recorder.start(continuing)) onStarted();
+  async function start(from?: Recording) {
+    if (await recorder.start(from)) onStarted();
   }
 </script>
 
@@ -46,7 +46,10 @@
   {/if}
 
   <div
-    class="pointer-events-auto flex items-center gap-2 rounded-full border border-zinc-200 bg-white/90 p-1.5 shadow-lg backdrop-blur dark:border-zinc-800 dark:bg-zinc-900/90"
+    class={[
+      "pointer-events-auto flex items-center gap-2 rounded-full border border-zinc-200 bg-white/90 p-1.5 shadow-lg backdrop-blur-xl dark:border-zinc-800 dark:bg-zinc-900/80",
+      status && !status.paused && "haunted-glow",
+    ]}
     role={status ? "status" : undefined}
   >
     {#if status}
@@ -85,13 +88,18 @@
         <LanguagePicker />
       {/if}
       <button
-        class="flex items-center gap-2 rounded-full bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:opacity-60 dark:bg-white dark:text-zinc-900 dark:hover:bg-zinc-200"
+        class="btn-primary px-4 py-2"
         disabled={recorder.installing}
-        onclick={start}
+        onclick={() => start(continuing)}
       >
-        <span class="size-2.5 rounded-full bg-red-500" aria-hidden="true"></span>
+        <span class="ember size-2.5 rounded-full" aria-hidden="true"></span>
         {recorder.installing ? "Downloading…" : continuing ? "Continue recording" : "Start recording"}
       </button>
+      {#if continuing}
+        <button class="btn px-4 py-2" disabled={recorder.installing} onclick={() => start()}>
+          <span aria-hidden="true">＋</span>New note
+        </button>
+      {/if}
     {/if}
   </div>
 </div>

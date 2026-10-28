@@ -43,7 +43,7 @@
   <TranscriptPanel
     lines={recorder.live}
     label={detection}
-    empty={status.transcriptionError ?? "Listening… what you and the call say will appear here."}
+    empty={status.transcriptionError ?? "Listening… every word spoken, by you or the call, will surface here."}
     follow
   />
   <div class="h-20 shrink-0"></div>

@@ -45,7 +45,9 @@
   class="flex w-60 shrink-0 flex-col gap-4 border-r border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900/60"
   aria-label="Sidebar"
 >
-  <p class="px-2 pt-1 text-sm font-semibold">Aube</p>
+  <p class="flex items-center gap-1.5 px-2 pt-1 font-[family-name:var(--font-haunt)] text-base font-semibold tracking-wide">
+    <span class="text-blue-600 drop-shadow-[0_0_8px_rgb(180_140_255/0.7)]" aria-hidden="true">☾</span>Aube
+  </p>
 
   <div class="relative">
     <label for="search" class="sr-only">Search transcripts</label>
