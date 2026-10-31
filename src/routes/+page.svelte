@@ -30,6 +30,8 @@
   }
 </script>
 
+<div class="fixed inset-x-0 top-0 z-50 h-8" data-tauri-drag-region></div>
+
 <div class="flex h-screen">
   <Sidebar {view} bind:query onNavigate={navigate} />
 

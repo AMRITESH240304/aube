@@ -3,6 +3,7 @@
 </script>
 
 <script lang="ts">
+  import { AudioLines, House, Search, Settings } from "@lucide/svelte";
   import { recorder } from "$lib/recorder.svelte";
 
   let {
@@ -25,16 +26,17 @@
 
 <svelte:window onkeydown={onKeydown} />
 
-{#snippet navItem(label: string, target: View, count?: number)}
+{#snippet navItem(label: string, target: View, Icon: typeof House, count?: number)}
   <button
     class={[
-      "flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-sm hover:bg-zinc-200/70 dark:hover:bg-zinc-800",
+      "flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm hover:bg-zinc-200/70 dark:hover:bg-zinc-800",
       isActive(target) && "bg-zinc-200 font-medium dark:bg-zinc-800",
     ]}
     aria-current={isActive(target) ? "page" : undefined}
     onclick={() => onNavigate(target)}
   >
-    <span class="truncate">{label}</span>
+    <Icon class="size-4 shrink-0 text-zinc-400" aria-hidden="true" />
+    <span class="flex-1 truncate">{label}</span>
     {#if count}
       <span class="text-xs text-zinc-500 tabular-nums">{count}</span>
     {/if}
@@ -42,22 +44,23 @@
 {/snippet}
 
 <nav
-  class="flex w-60 shrink-0 flex-col gap-4 border-r border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900/60"
+  class="surface flex w-60 shrink-0 flex-col gap-4 border-r border-zinc-200 bg-zinc-50 p-3 pt-11 dark:border-zinc-800 dark:bg-zinc-900/60"
   aria-label="Sidebar"
 >
-  <p class="flex items-center gap-1.5 px-2 pt-1 font-[family-name:var(--font-haunt)] text-base font-semibold tracking-wide">
-    <span class="text-blue-600 drop-shadow-[0_0_8px_rgb(180_140_255/0.7)]" aria-hidden="true">☾</span>Aube
+  <p class="flex items-center gap-2 px-2 font-[family-name:var(--display-font)] text-base font-semibold tracking-wide">
+    <img src="/favicon.png" alt="" class="size-5 rounded-[5px] drop-shadow-[0_0_8px_rgb(var(--glow)/0.6)]" />Aube
   </p>
 
   <div class="relative">
     <label for="search" class="sr-only">Search transcripts</label>
+    <Search class="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-zinc-500" aria-hidden="true" />
     <input
       id="search"
       type="search"
       bind:this={search}
       bind:value={query}
       placeholder="Search transcripts"
-      class="w-full rounded-md border border-zinc-300 bg-white px-3 py-1.5 pr-9 text-sm focus-visible:outline-2 focus-visible:outline-blue-600 dark:border-zinc-700 dark:bg-zinc-950"
+      class="w-full rounded-md border border-zinc-300 bg-white py-1.5 pr-9 pl-8 text-sm focus-visible:outline-2 focus-visible:outline-blue-600 dark:border-zinc-700 dark:bg-zinc-950"
     />
     {#if !query}
       <kbd class="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 text-xs text-zinc-400">⌘F</kbd>
@@ -65,12 +68,12 @@
   </div>
 
   <div class="space-y-0.5">
-    {@render navItem("Home", { kind: "home" })}
-    {@render navItem("All recordings", { kind: "all" }, recorder.recordings.length)}
+    {@render navItem("Home", { kind: "home" }, House)}
+    {@render navItem("All recordings", { kind: "all" }, AudioLines, recorder.recordings.length)}
   </div>
 
   <div class="mt-auto">
-    {@render navItem("Settings", { kind: "settings" })}
+    {@render navItem("Settings", { kind: "settings" }, Settings)}
   </div>
 
 </nav>

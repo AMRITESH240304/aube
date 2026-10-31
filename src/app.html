@@ -1,7 +1,12 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en" class="dark" data-theme="haunted">
   <head>
     <meta charset="utf-8" />
+    <script>
+      try {
+        document.documentElement.dataset.theme = localStorage.getItem("theme") || "haunted";
+      } catch {}
+    </script>
     <link rel="icon" href="%sveltekit.assets%/favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Aube</title>
