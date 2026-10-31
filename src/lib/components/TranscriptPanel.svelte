@@ -31,7 +31,7 @@
   });
 </script>
 
-<section class="surface flex max-h-[40vh] shrink-0 flex-col border-t border-zinc-200 dark:border-zinc-800" aria-label="Transcript">
+<section class="flex max-h-[40vh] shrink-0 flex-col border-t border-zinc-200 dark:border-zinc-800" aria-label="Transcript">
   <div class="flex items-center gap-3 px-6 py-2">
     <button
       class="flex items-center gap-1.5 rounded text-xs font-medium tracking-wide text-zinc-500 uppercase hover:text-zinc-900 focus-visible:outline-2 focus-visible:outline-blue-600 dark:hover:text-zinc-100"

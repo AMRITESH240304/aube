@@ -14,7 +14,6 @@
   aria-checked={checked}
   {checked}
   {disabled}
-  glass={theme.glass}
   rounded={theme.current !== "terminal"}
   onclick={() => onchange(!checked)}
 />

@@ -44,18 +44,11 @@ function remember(key: string, value: string) {
 
 class ThemeState {
   current = $state<Theme>((document.documentElement.dataset.theme as Theme) ?? "haunted");
-  glass = $state(document.documentElement.hasAttribute("data-glass"));
 
   set(theme: Theme) {
     this.current = theme;
     document.documentElement.dataset.theme = theme;
     remember("theme", theme);
-  }
-
-  setGlass(on: boolean) {
-    this.glass = on;
-    document.documentElement.toggleAttribute("data-glass", on);
-    remember("glass", on ? "on" : "off");
   }
 }
 

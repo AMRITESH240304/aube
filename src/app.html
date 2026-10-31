@@ -5,9 +5,7 @@
     <script>
       try {
         const theme = localStorage.getItem("theme");
-        if (theme === "glass") localStorage.setItem("glass", "on");
         document.documentElement.dataset.theme = theme && theme !== "glass" ? theme : "haunted";
-        document.documentElement.toggleAttribute("data-glass", localStorage.getItem("glass") === "on");
       } catch {}
     </script>
     <link rel="icon" href="%sveltekit.assets%/favicon.png" />

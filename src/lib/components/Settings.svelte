@@ -107,7 +107,7 @@
         role="radio"
         aria-checked={selected}
         class={[
-          "surface overflow-hidden rounded-lg border text-left transition focus-visible:outline-2 focus-visible:outline-blue-600",
+          "overflow-hidden rounded-lg border text-left transition focus-visible:outline-2 focus-visible:outline-blue-600",
           selected ? "border-blue-600 ring-1 ring-blue-600" : "border-zinc-700 hover:border-zinc-500",
         ]}
         onclick={() => theme.set(option.id)}
@@ -123,15 +123,6 @@
       </button>
     {/each}
   </div>
-  <label class="flex items-start gap-3 text-sm">
-    <Toggle checked={theme.glass} onchange={(on) => theme.setGlass(on)} />
-    <span>
-      <span class="font-medium">Glass</span>
-      <span class="block text-zinc-500">
-        Frosted black-and-white panels and buttons in any theme, with your desktop showing through the window.
-      </span>
-    </span>
-  </label>
 </section>
 
 <section aria-labelledby="intelligence-heading" class="mb-8 space-y-4">

@@ -11,7 +11,6 @@
 </script>
 
 <NeoButton
-  glass={theme.glass}
   rounded={theme.current !== "terminal"}
   color={danger ? "var(--color-red-500)" : undefined}
   class={[primary && "aube-primary", className]}

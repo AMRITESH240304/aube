@@ -35,7 +35,7 @@
   {#if !recorder.loaded}
     <div class="h-14 animate-pulse rounded-lg bg-zinc-100 dark:bg-zinc-900" aria-busy="true"></div>
   {:else if shown.length === 0}
-    <div class="surface rounded-lg border border-dashed border-zinc-300 px-6 py-10 text-center dark:border-zinc-700">
+    <div class="rounded-lg border border-dashed border-zinc-300 px-6 py-10 text-center dark:border-zinc-700">
       <span class="mx-auto grid size-12 place-items-center rounded-xl bg-zinc-800 text-blue-600" aria-hidden="true">
         {#if theme.current === "haunted"}<Ghost class="size-6" />{:else}<AudioLines class="size-6" />{/if}
       </span>
@@ -47,7 +47,7 @@
       </p>
     </div>
   {:else}
-    <ul class="surface divide-y divide-zinc-200 overflow-hidden rounded-lg border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
+    <ul class="divide-y divide-zinc-200 overflow-hidden rounded-lg border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
       {#each shown as recording (recording.id)}
         <li>
           <button

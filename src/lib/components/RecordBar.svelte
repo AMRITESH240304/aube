@@ -49,7 +49,7 @@
 
   <div
     class={[
-      "surface pointer-events-auto flex items-center gap-2 rounded-[var(--radius-btn)] border border-zinc-200 bg-white/90 p-1.5 shadow-lg backdrop-blur-xl dark:border-zinc-800 dark:bg-zinc-900/80",
+      "pointer-events-auto flex items-center gap-2 rounded-[var(--radius-btn)] border border-zinc-200 bg-white/90 p-1.5 shadow-lg backdrop-blur-xl dark:border-zinc-800 dark:bg-zinc-900/80",
       status && !status.paused && "recording-glow",
     ]}
     role={status ? "status" : undefined}

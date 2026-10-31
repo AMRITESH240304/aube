@@ -182,7 +182,7 @@
         <p class="mb-6 text-sm text-red-700 dark:text-red-400" role="alert">{actionError}</p>
       {/if}
       <div class="mb-5 flex items-center gap-3">
-        <NeoTabs bind:active={tab} pill glass={theme.glass} rounded={theme.current !== "terminal"} aria-label="View">
+        <NeoTabs bind:active={tab} pill rounded={theme.current !== "terminal"} aria-label="View">
           {#each [["summary", "Summary", Sparkles], ["notes", "My notes", NotebookPen]] as const as [id, label, Icon] (id)}
             <NeoTab tabId={id}>
               <span class="flex items-center gap-1.5"><Icon class="size-3.5" aria-hidden="true" />{label}</span>
