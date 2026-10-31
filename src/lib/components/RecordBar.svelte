@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Pause, Play, Plus, Square } from "@lucide/svelte";
   import { formatDuration, recorder, type Recording } from "$lib/recorder.svelte";
   import LanguagePicker from "./LanguagePicker.svelte";
 
@@ -47,8 +48,8 @@
 
   <div
     class={[
-      "pointer-events-auto flex items-center gap-2 rounded-full border border-zinc-200 bg-white/90 p-1.5 shadow-lg backdrop-blur-xl dark:border-zinc-800 dark:bg-zinc-900/80",
-      status && !status.paused && "haunted-glow",
+      "surface pointer-events-auto flex items-center gap-2 rounded-[var(--radius-btn)] border border-zinc-200 bg-white/90 p-1.5 shadow-lg backdrop-blur-xl dark:border-zinc-800 dark:bg-zinc-900/80",
+      status && !status.paused && "recording-glow",
     ]}
     role={status ? "status" : undefined}
   >
@@ -68,11 +69,9 @@
         onclick={() => recorder.setPaused(!status.paused)}
       >
         {#if status.paused}
-          <svg viewBox="0 0 16 16" class="size-4 fill-current" aria-hidden="true"><path d="M4 2.5v11l9-5.5z" /></svg>
+          <Play class="size-4" fill="currentColor" aria-hidden="true" />
         {:else}
-          <svg viewBox="0 0 16 16" class="size-4 fill-current" aria-hidden="true">
-            <rect x="3.5" y="2.5" width="3" height="11" rx="1" /><rect x="9.5" y="2.5" width="3" height="11" rx="1" />
-          </svg>
+          <Pause class="size-4" fill="currentColor" aria-hidden="true" />
         {/if}
       </button>
       <button
@@ -80,7 +79,7 @@
         disabled={recorder.saving}
         onclick={stop}
       >
-        <span class="size-2 rounded-[2px] bg-white" aria-hidden="true"></span>
+        <Square class="size-3" fill="currentColor" aria-hidden="true" />
         {recorder.saving ? "Saving…" : "Stop"}
       </button>
     {:else}
@@ -97,7 +96,7 @@
       </button>
       {#if continuing}
         <button class="btn px-4 py-2" disabled={recorder.installing} onclick={() => start()}>
-          <span aria-hidden="true">＋</span>New note
+          <Plus class="size-4" aria-hidden="true" />New note
         </button>
       {/if}
     {/if}

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
+  import { ArrowLeft, Check, Copy, Download, NotebookPen, PencilLine, Sparkles, Trash2 } from "@lucide/svelte";
   import { formatDuration, recorder, type Recording } from "$lib/recorder.svelte";
   import { toMarkdown } from "$lib/markdown";
   import type { Summary } from "$lib/summary";
@@ -117,7 +118,10 @@
 
 {#snippet copyButton()}
   {#if segments.length}
-    <button class="btn py-1 text-xs" onclick={copy}>{copied ? "Copied" : "Copy"}</button>
+    <button class="btn py-1 text-xs" onclick={copy}>
+      {#if copied}<Check class="size-3.5" aria-hidden="true" />{:else}<Copy class="size-3.5" aria-hidden="true" />{/if}
+      {copied ? "Copied" : "Copy"}
+    </button>
   {/if}
 {/snippet}
 
@@ -125,7 +129,7 @@
   <div class="min-h-0 flex-1 overflow-y-auto">
     <div class="mx-auto w-full max-w-3xl px-8 py-8">
       <div class="mb-6 flex items-start gap-4">
-        <button class="btn" onclick={onBack} aria-label="Back to recordings">← Back</button>
+        <button class="btn" onclick={onBack} aria-label="Back to recordings"><ArrowLeft class="size-4" aria-hidden="true" />Back</button>
         <div class="min-w-0 flex-1">
           {#if renaming}
             <form class="flex gap-2" onsubmit={(e) => (e.preventDefault(), rename())}>
@@ -147,10 +151,24 @@
           </p>
         </div>
         {#if !renaming && !confirmDelete}
-          <button class="btn" onclick={() => share(false)} disabled={busy}>{shared === "copy" ? "Copied" : "Copy .md"}</button>
-          <button class="btn" onclick={() => share(true)} disabled={busy}>{shared === "save" ? "Saved to Downloads" : "Save .md"}</button>
-          <button class="btn" onclick={() => ((title = recording.title), (renaming = true))}>Rename</button>
-          <button class="btn text-red-700 dark:text-red-400" onclick={() => (confirmDelete = true)}>Delete…</button>
+          <button class="btn" onclick={() => share(false)} disabled={busy}>
+            {#if shared === "copy"}<Check class="size-4" aria-hidden="true" />{:else}<Copy class="size-4" aria-hidden="true" />{/if}
+            {shared === "copy" ? "Copied" : "Copy .md"}
+          </button>
+          <button class="btn" onclick={() => share(true)} disabled={busy}>
+            <Download class="size-4" aria-hidden="true" />{shared === "save" ? "Saved to Downloads" : "Save .md"}
+          </button>
+          <button class="btn" onclick={() => ((title = recording.title), (renaming = true))} aria-label="Rename" title="Rename">
+            <PencilLine class="size-4" aria-hidden="true" />
+          </button>
+          <button
+            class="btn text-red-700 dark:text-red-400"
+            onclick={() => (confirmDelete = true)}
+            aria-label="Delete…"
+            title="Delete"
+          >
+            <Trash2 class="size-4" aria-hidden="true" />
+          </button>
         {/if}
       </div>
       {#if confirmDelete}
@@ -168,17 +186,17 @@
         <p class="mb-6 text-sm text-red-700 dark:text-red-400" role="alert">{actionError}</p>
       {/if}
       <div class="mb-5 flex items-center gap-1" role="tablist" aria-label="View">
-        {#each [["summary", "Summary"], ["notes", "My notes"]] as [id, label] (id)}
+        {#each [["summary", "Summary", Sparkles], ["notes", "My notes", NotebookPen]] as const as [id, label, Icon] (id)}
           <button
             role="tab"
             aria-selected={tab === id}
             class={[
-              "rounded-full px-3 py-1 text-sm focus-visible:outline-2 focus-visible:outline-blue-600",
+              "flex items-center gap-1.5 rounded-full px-3 py-1 text-sm focus-visible:outline-2 focus-visible:outline-blue-600",
               tab === id ? "bg-zinc-900 text-white dark:bg-white dark:text-zinc-900" : "hover:bg-zinc-100 dark:hover:bg-zinc-800",
             ]}
-            onclick={() => (tab = id as "summary" | "notes")}
+            onclick={() => (tab = id)}
           >
-            {label}
+            <Icon class="size-3.5" aria-hidden="true" />{label}
           </button>
         {/each}
         {#if tab === "summary" && !writingSummary && transcript?.segments.length}

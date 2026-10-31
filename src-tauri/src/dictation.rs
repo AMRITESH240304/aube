@@ -25,10 +25,12 @@ const KEYS: [&str; 6] = [
 ];
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct Settings {
     pub key: String,
     pub cleanup: bool,
+    pub spoken_edits: bool,
+    pub voice_fixes: bool,
 }
 
 impl Default for Settings {
@@ -36,6 +38,8 @@ impl Default for Settings {
         Self {
             key: OFF.to_owned(),
             cleanup: true,
+            spoken_edits: true,
+            voice_fixes: true,
         }
     }
 }
@@ -68,6 +72,12 @@ impl Settings {
                     llm.model.clone(),
                 ]),
             }
+        }
+        if !self.spoken_edits {
+            arguments.push("--no-spoken-edits".to_owned());
+        }
+        if !self.voice_fixes {
+            arguments.push("--no-voice-fixes".to_owned());
         }
         if ask_for_access {
             arguments.push("--ask-for-access".to_owned());
