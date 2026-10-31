@@ -44,7 +44,7 @@
 {/snippet}
 
 <nav
-  class="surface flex w-60 shrink-0 flex-col gap-4 border-r border-zinc-200 bg-zinc-50 p-3 pt-11 dark:border-zinc-800 dark:bg-zinc-900/60"
+  class="flex w-60 shrink-0 flex-col gap-4 border-r border-zinc-200 bg-zinc-50 p-3 pt-11 dark:border-zinc-800 dark:bg-zinc-900/60"
   aria-label="Sidebar"
 >
   <p class="flex items-center gap-2 px-2 font-[family-name:var(--display-font)] text-base font-semibold tracking-wide">

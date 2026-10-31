@@ -4,6 +4,8 @@
   import { Mic, Palette, Sparkles } from "@lucide/svelte";
   import { dictation, TALK_KEYS, VOICE_COMMANDS } from "$lib/dictation.svelte";
   import { theme, THEMES } from "$lib/theme.svelte";
+  import Button from "./Button.svelte";
+  import Toggle from "./Toggle.svelte";
 
   type LlmProvider = "apple" | "ollama";
   type LlmSettings = { provider: LlmProvider; url: string; model: string };
@@ -84,7 +86,7 @@
   >
     <p class="flex-1">{text}</p>
     {#if action}
-      <button class="btn shrink-0 bg-white py-1 text-xs dark:bg-zinc-900" onclick={action.run}>{action.label}</button>
+      <Button class="shrink-0" onclick={action.run}>{action.label}</Button>
     {/if}
   </div>
 {/snippet}
@@ -96,16 +98,16 @@
     <h3 id="appearance-heading" class="flex items-center gap-2 font-semibold">
       <Palette class="size-4 text-blue-600" aria-hidden="true" />Appearance
     </h3>
-    <p class="mt-1 text-sm text-zinc-500">Pick how Aube looks. Glass lets your desktop show through the window.</p>
+    <p class="mt-1 text-sm text-zinc-500">Pick how Aube looks.</p>
   </div>
-  <div class="grid grid-cols-2 gap-3" role="radiogroup" aria-label="Theme">
+  <div class="grid grid-cols-3 gap-3" role="radiogroup" aria-label="Theme">
     {#each THEMES as option (option.id)}
       {@const selected = theme.current === option.id}
       <button
         role="radio"
         aria-checked={selected}
         class={[
-          "surface overflow-hidden rounded-lg border text-left transition focus-visible:outline-2 focus-visible:outline-blue-600",
+          "overflow-hidden rounded-lg border text-left transition focus-visible:outline-2 focus-visible:outline-blue-600",
           selected ? "border-blue-600 ring-1 ring-blue-600" : "border-zinc-700 hover:border-zinc-500",
         ]}
         onclick={() => theme.set(option.id)}
@@ -193,9 +195,9 @@
               <option value={model}></option>
             {/each}
           </datalist>
-          <button class="btn shrink-0 py-1 text-xs" onclick={refreshModels} disabled={loadingModels}>
+          <Button class="shrink-0" onclick={refreshModels} disabled={loadingModels}>
             {loadingModels ? "Checking…" : "Refresh"}
-          </button>
+          </Button>
         </div>
         {#if !llm.model}
           <span class="mt-1 block text-xs text-amber-700 dark:text-amber-300">
@@ -262,13 +264,7 @@
   </fieldset>
 
   <label class="flex items-start gap-3 text-sm">
-    <input
-      type="checkbox"
-      class="mt-0.5 size-4 accent-zinc-900 dark:accent-white"
-      checked={dictation.settings.cleanup}
-      disabled={!on}
-      onchange={(e) => dictation.update({ cleanup: e.currentTarget.checked })}
-    />
+    <Toggle checked={dictation.settings.cleanup} disabled={!on} onchange={(cleanup) => dictation.update({ cleanup })} />
     <span>
       <span class="font-medium">
         Tidy up with {llm.provider === "ollama" ? "Ollama" : "Apple Intelligence"}
@@ -289,12 +285,10 @@
 
   {#each VOICE_COMMANDS as command (command.setting)}
     <label class="flex items-start gap-3 text-sm">
-      <input
-        type="checkbox"
-        class="mt-0.5 size-4 accent-zinc-900 dark:accent-white"
+      <Toggle
         checked={dictation.settings[command.setting]}
         disabled={!on}
-        onchange={(e) => dictation.update({ [command.setting]: e.currentTarget.checked })}
+        onchange={(checked) => dictation.update({ [command.setting]: checked })}
       />
       <span>
         <span class="font-medium">{command.title}</span>

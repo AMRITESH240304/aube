@@ -26,7 +26,6 @@
   color-scheme: dark;
   --glow: 180 140 255;
   --record: 255 90 60;
-  --hover-glow: 0 0 18px rgb(var(--glow) / 0.28);
   --primary-bg: linear-gradient(180deg, #d9c6ff, #a985ff);
   --primary-fg: #0c0815;
   --radius-btn: 9999px;
@@ -58,8 +57,10 @@
   --radius-lg: 0;
   --radius-xl: 0;
   --radius-btn: 0;
+  --neo-btn-border-radius: 0;
+  --neo-border-radius: 0;
+  --neo-border-radius-xxl: 0;
   --glow: 185 166 255;
-  --hover-glow: none;
   --primary-bg: #f4f4f5;
   --primary-fg: #09090b;
   --display-font: var(--font-sans);
@@ -86,7 +87,6 @@
   --color-blue-600: #eef56b;
   --color-emerald-500: #d4f25a;
   --glow: 238 245 107;
-  --hover-glow: none;
   --primary-bg: #eef56b;
   --primary-fg: #121210;
   --display-font: var(--font-sans);
@@ -96,36 +96,32 @@
   --backdrop: radial-gradient(50rem 30rem at 50% -20%, rgb(238 245 107 / 0.05), transparent 70%), var(--color-zinc-950);
 }
 
-:root[data-theme="glass"] {
-  --color-zinc-50: #f8fafc;
-  --color-zinc-100: #eef2f8;
-  --color-zinc-200: #d9e0ea;
-  --color-zinc-300: #b8c2d1;
-  --color-zinc-400: #93a0b3;
-  --color-zinc-500: #8390a6;
-  --color-zinc-600: #556074;
-  --color-zinc-700: #3a4354;
-  --color-zinc-800: #262d3a;
-  --color-zinc-900: #171c26;
-  --color-zinc-950: #0d1118;
-  --color-blue-600: #0a84ff;
-  --color-emerald-500: #32d74b;
-  --color-red-500: #ff6961;
-  --color-red-600: #ff453a;
-  --color-red-700: #e0352b;
-  --glow: 120 180 255;
-  --record: 255 69 58;
-  --primary-bg: linear-gradient(180deg, #5aaeff, #0a72ff);
-  --primary-fg: #fff;
-  --display-font: var(--font-sans);
-  --display-weight: 600;
-  --display-tracking: -0.02em;
-  --display-shadow: none;
-  --backdrop: linear-gradient(160deg, rgb(70 110 200 / 0.22), rgb(150 70 190 / 0.14) 55%, rgb(8 10 16 / 0.42));
+:root {
+  --neo-background-color: var(--color-zinc-950);
+  --neo-text-color: var(--color-zinc-100);
+  --neo-color-primary: var(--color-blue-600);
+  --neo-font-family: var(--font-sans);
+  --neo-btn-margin: 0;
+}
+
+html {
+  background: transparent;
 }
 
 body {
   background: var(--backdrop);
+}
+
+:root .neo-button > .neo-content {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+:root .neo-button.neo-button.aube-primary {
+  --neo-btn-text-color: var(--primary-fg);
+  background: var(--primary-bg);
+  color: var(--primary-fg);
 }
 
 h1,
@@ -136,7 +132,7 @@ h2 {
   text-shadow: var(--display-shadow);
 }
 
-:root[data-theme="haunted"] body::before {
+:root[data-theme="dusk"] body::before {
   content: "";
   position: fixed;
   inset: -20%;
@@ -155,24 +151,6 @@ h2 {
   text-transform: uppercase;
 }
 
-:root[data-theme="ship"] .btn {
-  border-color: transparent;
-  background: var(--color-zinc-800);
-}
-
-:root[data-theme="glass"] :is(.surface, .btn, .btn-primary):not(.recording-glow) {
-  backdrop-filter: blur(28px) saturate(1.8);
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.3),
-    inset 0 -1px 0 rgb(255 255 255 / 0.06),
-    0 10px 30px rgb(0 0 0 / 0.22);
-}
-
-:root[data-theme="glass"] :is(.surface, .btn) {
-  border-color: rgb(255 255 255 / 0.16);
-  background: linear-gradient(180deg, rgb(255 255 255 / 0.13), rgb(255 255 255 / 0.04));
-}
-
 @layer base {
   body {
     @apply text-zinc-100 antialiased;
@@ -180,24 +158,6 @@ h2 {
 
   ::selection {
     background: rgb(var(--glow) / 0.35);
-  }
-}
-
-@utility btn {
-  @apply inline-flex items-center justify-center gap-2 border border-zinc-700 bg-zinc-900/60 px-3.5 py-1.5 text-sm font-medium text-zinc-100 backdrop-blur transition hover:border-zinc-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:opacity-50;
-  border-radius: var(--radius-btn);
-  &:hover:not(:disabled) {
-    box-shadow: var(--hover-glow);
-  }
-}
-
-@utility btn-primary {
-  @apply btn border-transparent;
-  color: var(--primary-fg);
-  background: var(--primary-bg);
-  &:hover:not(:disabled) {
-    filter: brightness(1.06);
-    box-shadow: var(--hover-glow);
   }
 }
 
@@ -229,7 +189,7 @@ h2 {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :root[data-theme="haunted"] body::before,
+  :root[data-theme="dusk"] body::before,
   .ember {
     animation: none;
   }

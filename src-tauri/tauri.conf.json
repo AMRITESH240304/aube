@@ -19,15 +19,9 @@
         "minHeight": 520,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
-        "theme": "Dark",
-        "transparent": true,
-        "windowEffects": {
-          "effects": ["underWindowBackground"],
-          "state": "followsWindowActiveState"
-        }
+        "theme": "Dark"
       }
     ],
-    "macOSPrivateApi": true,
     "security": {
       "csp": null
     }

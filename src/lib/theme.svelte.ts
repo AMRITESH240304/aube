@@ -1,7 +1,7 @@
 export const THEMES = [
   {
-    id: "haunted",
-    name: "Haunted",
+    id: "dusk",
+    name: "Dusk",
     note: "Moonlit violet and drifting mist",
     bg: "radial-gradient(circle at 85% 0%, #3a2a5c, #0c0815 70%)",
     fg: "#e9e2f4",
@@ -32,30 +32,23 @@ export const THEMES = [
     weight: 800,
     radius: "9999px",
   },
-  {
-    id: "glass",
-    name: "Glass",
-    note: "Your desktop shows through",
-    bg: "linear-gradient(160deg, #4d6fb8, #7b4a9e 55%, #10141c)",
-    fg: "#ffffff",
-    accent: "linear-gradient(180deg, #5aaeff, #0a72ff)",
-    font: "system-ui",
-    weight: 600,
-    radius: "9999px",
-  },
 ] as const;
 
 export type Theme = (typeof THEMES)[number]["id"];
 
+function remember(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {}
+}
+
 class ThemeState {
-  current = $state<Theme>((document.documentElement.dataset.theme as Theme) ?? "haunted");
+  current = $state<Theme>((document.documentElement.dataset.theme as Theme) ?? "dusk");
 
   set(theme: Theme) {
     this.current = theme;
     document.documentElement.dataset.theme = theme;
-    try {
-      localStorage.setItem("theme", theme);
-    } catch {}
+    remember("theme", theme);
   }
 }
 

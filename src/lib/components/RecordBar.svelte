@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Pause, Play, Plus, Square } from "@lucide/svelte";
   import { formatDuration, recorder, type Recording } from "$lib/recorder.svelte";
+  import Button from "./Button.svelte";
   import LanguagePicker from "./LanguagePicker.svelte";
 
   let {
@@ -42,13 +43,13 @@
       role="alert"
     >
       Couldn't record: {recorder.error}
-      <button class="btn" onclick={() => (recorder.error = "")}>Dismiss</button>
+      <Button onclick={() => (recorder.error = "")}>Dismiss</Button>
     </p>
   {/if}
 
   <div
     class={[
-      "surface pointer-events-auto flex items-center gap-2 rounded-[var(--radius-btn)] border border-zinc-200 bg-white/90 p-1.5 shadow-lg backdrop-blur-xl dark:border-zinc-800 dark:bg-zinc-900/80",
+      "pointer-events-auto flex items-center gap-2 rounded-[var(--radius-btn)] border border-zinc-200 bg-white/90 p-1.5 shadow-lg backdrop-blur-xl dark:border-zinc-800 dark:bg-zinc-900/80",
       status && !status.paused && "recording-glow",
     ]}
     role={status ? "status" : undefined}
@@ -86,18 +87,14 @@
       {#if recorder.languages.length}
         <LanguagePicker />
       {/if}
-      <button
-        class="btn-primary px-4 py-2"
-        disabled={recorder.installing}
-        onclick={() => start(continuing)}
-      >
+      <Button primary disabled={recorder.installing} onclick={() => start(continuing)}>
         <span class="ember size-2.5 rounded-full" aria-hidden="true"></span>
         {recorder.installing ? "Downloading…" : continuing ? "Continue recording" : "Start recording"}
-      </button>
+      </Button>
       {#if continuing}
-        <button class="btn px-4 py-2" disabled={recorder.installing} onclick={() => start()}>
+        <Button disabled={recorder.installing} onclick={() => start()}>
           <Plus class="size-4" aria-hidden="true" />New note
-        </button>
+        </Button>
       {/if}
     {/if}
   </div>
