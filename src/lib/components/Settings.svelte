@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
-  import { dictation, TALK_KEYS } from "$lib/dictation.svelte";
+  import { Mic, Palette, Sparkles } from "@lucide/svelte";
+  import { dictation, TALK_KEYS, VOICE_COMMANDS } from "$lib/dictation.svelte";
+  import { theme, THEMES } from "$lib/theme.svelte";
 
   type LlmProvider = "apple" | "ollama";
   type LlmSettings = { provider: LlmProvider; url: string; model: string };
@@ -89,9 +91,43 @@
 
 <h2 class="mb-6 text-xl font-semibold">Settings</h2>
 
+<section aria-labelledby="appearance-heading" class="mb-8 space-y-4">
+  <div>
+    <h3 id="appearance-heading" class="flex items-center gap-2 font-semibold">
+      <Palette class="size-4 text-blue-600" aria-hidden="true" />Appearance
+    </h3>
+    <p class="mt-1 text-sm text-zinc-500">Pick how Aube looks. Glass lets your desktop show through the window.</p>
+  </div>
+  <div class="grid grid-cols-2 gap-3" role="radiogroup" aria-label="Theme">
+    {#each THEMES as option (option.id)}
+      {@const selected = theme.current === option.id}
+      <button
+        role="radio"
+        aria-checked={selected}
+        class={[
+          "surface overflow-hidden rounded-lg border text-left transition focus-visible:outline-2 focus-visible:outline-blue-600",
+          selected ? "border-blue-600 ring-1 ring-blue-600" : "border-zinc-700 hover:border-zinc-500",
+        ]}
+        onclick={() => theme.set(option.id)}
+      >
+        <span class="flex h-20 items-end gap-2 p-3" style:background={option.bg} style:color={option.fg}>
+          <span class="text-2xl leading-none" style:font-family={option.font} style:font-weight={option.weight}>Aa</span>
+          <span class="ml-auto h-5 w-12" style:background={option.accent} style:border-radius={option.radius}></span>
+        </span>
+        <span class="block px-3 py-2">
+          <span class="block text-sm font-medium">{option.name}</span>
+          <span class="block text-xs text-zinc-500">{option.note}</span>
+        </span>
+      </button>
+    {/each}
+  </div>
+</section>
+
 <section aria-labelledby="intelligence-heading" class="mb-8 space-y-4">
   <div>
-    <h3 id="intelligence-heading" class="font-semibold">Intelligence</h3>
+    <h3 id="intelligence-heading" class="flex items-center gap-2 font-semibold">
+      <Sparkles class="size-4 text-blue-600" aria-hidden="true" />Intelligence
+    </h3>
     <p class="mt-1 text-sm text-zinc-500">
       Choose the model that writes meeting summaries and tidies push-to-talk dictation.
     </p>
@@ -186,7 +222,9 @@
 
 <section aria-labelledby="talk-heading" class="space-y-5">
   <div>
-    <h3 id="talk-heading" class="font-semibold">Push to talk</h3>
+    <h3 id="talk-heading" class="flex items-center gap-2 font-semibold">
+      <Mic class="size-4 text-blue-600" aria-hidden="true" />Push to talk
+    </h3>
     <p class="mt-1 text-sm text-zinc-500">
       Hold a key anywhere on your Mac and talk. What you say appears under the notch, and when you let go it's typed
       into the app you're using.
@@ -248,6 +286,22 @@
       {/if}
     </span>
   </label>
+
+  {#each VOICE_COMMANDS as command (command.setting)}
+    <label class="flex items-start gap-3 text-sm">
+      <input
+        type="checkbox"
+        class="mt-0.5 size-4 accent-zinc-900 dark:accent-white"
+        checked={dictation.settings[command.setting]}
+        disabled={!on}
+        onchange={(e) => dictation.update({ [command.setting]: e.currentTarget.checked })}
+      />
+      <span>
+        <span class="font-medium">{command.title}</span>
+        <span class="block text-zinc-500">{command.detail}</span>
+      </span>
+    </label>
+  {/each}
 
   {#if on}
     <div class="space-y-2">

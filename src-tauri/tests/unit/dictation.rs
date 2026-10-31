@@ -5,6 +5,7 @@ fn settings(key: &str, cleanup: bool) -> Settings {
     Settings {
         key: key.into(),
         cleanup,
+        ..Settings::default()
     }
 }
 
@@ -35,6 +36,31 @@ fn the_helper_gets_the_key_language_and_cleanup_choice() {
             .unwrap(),
         ["--key", "right-option", "--no-cleanup", "--ask-for-access"]
     );
+}
+
+#[test]
+fn voice_commands_can_be_turned_off() {
+    let settings = Settings {
+        spoken_edits: false,
+        voice_fixes: false,
+        ..settings("fn", false)
+    };
+    assert_eq!(
+        settings.arguments(None, false, &apple()).unwrap(),
+        [
+            "--key",
+            "fn",
+            "--no-cleanup",
+            "--no-spoken-edits",
+            "--no-voice-fixes"
+        ]
+    );
+}
+
+#[test]
+fn settings_saved_before_voice_commands_turn_them_on() {
+    let saved: Settings = serde_json::from_str(r#"{"key":"fn","cleanup":false}"#).unwrap();
+    assert!(saved.spoken_edits && saved.voice_fixes && !saved.cleanup);
 }
 
 #[test]

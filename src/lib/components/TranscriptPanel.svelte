@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { ChevronDown } from "@lucide/svelte";
   import type { Snippet } from "svelte";
   import type { Segment } from "$lib/transcript";
   import Conversation from "./Conversation.svelte";
@@ -30,16 +31,14 @@
   });
 </script>
 
-<section class="flex max-h-[40vh] shrink-0 flex-col border-t border-zinc-200 dark:border-zinc-800" aria-label="Transcript">
+<section class="surface flex max-h-[40vh] shrink-0 flex-col border-t border-zinc-200 dark:border-zinc-800" aria-label="Transcript">
   <div class="flex items-center gap-3 px-6 py-2">
     <button
       class="flex items-center gap-1.5 rounded text-xs font-medium tracking-wide text-zinc-500 uppercase hover:text-zinc-900 focus-visible:outline-2 focus-visible:outline-blue-600 dark:hover:text-zinc-100"
       aria-expanded={open}
       onclick={() => (open = !open)}
     >
-      <svg viewBox="0 0 16 16" class={["size-3 fill-current transition-transform", !open && "-rotate-90"]} aria-hidden="true">
-        <path d="M4 6l4 4 4-4z" />
-      </svg>
+      <ChevronDown class={["size-3.5 transition-transform", !open && "-rotate-90"]} aria-hidden="true" />
       Transcript
     </button>
     <span class="min-w-0 flex-1 truncate text-xs text-zinc-500">{label}</span>
