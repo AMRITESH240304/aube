@@ -26,13 +26,14 @@ export const VOICE_COMMANDS: { setting: "spokenEdits" | "voiceFixes"; title: str
   {
     setting: "spokenEdits",
     title: "Edit while you speak",
-    detail: 'Say "scratch that" to drop the last sentence, "start over" to begin again, or "new line" and "new paragraph" for line breaks.',
+    detail:
+      'While you talk, say "delete the last line", "delete" and any words you said, "scratch that", "start over" or "new line". The notch shows the result live and the commands are never typed.',
   },
   {
     setting: "voiceFixes",
     title: "Fix what was typed",
     detail:
-      'Hold the key and say "delete that", "delete the last word", "delete the last line" or "delete everything" to remove what Aube typed since you last typed or clicked.',
+      'Hold the key and say only a command, like "delete that", "delete the last word" or "delete" and some words, to change what Aube typed since you last typed or clicked.',
   },
 ];
 
