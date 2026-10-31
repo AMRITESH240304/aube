@@ -1,7 +1,6 @@
 <script lang="ts">
-  import { ArrowRight, AudioLines, ChevronRight, Ghost } from "@lucide/svelte";
+  import { ArrowRight, AudioLines, ChevronRight } from "@lucide/svelte";
   import { formatDuration, recorder } from "$lib/recorder.svelte";
-  import { theme } from "$lib/theme.svelte";
   import Button from "./Button.svelte";
 
   let { limit, onOpen, onViewAll }: { limit?: number; onOpen: (id: string) => void; onViewAll?: () => void } =
@@ -37,11 +36,9 @@
   {:else if shown.length === 0}
     <div class="rounded-lg border border-dashed border-zinc-300 px-6 py-10 text-center dark:border-zinc-700">
       <span class="mx-auto grid size-12 place-items-center rounded-xl bg-zinc-800 text-blue-600" aria-hidden="true">
-        {#if theme.current === "haunted"}<Ghost class="size-6" />{:else}<AudioLines class="size-6" />{/if}
+        <AudioLines class="size-6" />
       </span>
-      <h3 class="mt-3 font-semibold">
-        {theme.current === "haunted" ? "Nothing haunts these halls yet" : "No recordings yet"}
-      </h3>
+      <h3 class="mt-3 font-semibold">No recordings yet</h3>
       <p class="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
         Press Start recording when your meeting starts, and every word will be kept.
       </p>

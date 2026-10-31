@@ -1,7 +1,7 @@
 export const THEMES = [
   {
-    id: "haunted",
-    name: "Haunted",
+    id: "dusk",
+    name: "Dusk",
     note: "Moonlit violet and drifting mist",
     bg: "radial-gradient(circle at 85% 0%, #3a2a5c, #0c0815 70%)",
     fg: "#e9e2f4",
@@ -43,7 +43,7 @@ function remember(key: string, value: string) {
 }
 
 class ThemeState {
-  current = $state<Theme>((document.documentElement.dataset.theme as Theme) ?? "haunted");
+  current = $state<Theme>((document.documentElement.dataset.theme as Theme) ?? "dusk");
 
   set(theme: Theme) {
     this.current = theme;

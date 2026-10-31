@@ -132,7 +132,7 @@ h2 {
   text-shadow: var(--display-shadow);
 }
 
-:root[data-theme="haunted"] body::before {
+:root[data-theme="dusk"] body::before {
   content: "";
   position: fixed;
   inset: -20%;
@@ -189,7 +189,7 @@ h2 {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :root[data-theme="haunted"] body::before,
+  :root[data-theme="dusk"] body::before,
   .ember {
     animation: none;
   }
