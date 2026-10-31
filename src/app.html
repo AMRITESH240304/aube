@@ -1,10 +1,13 @@
 <!doctype html>
-<html lang="en" class="dark" data-theme="haunted">
+<html lang="en" class="dark" data-theme="haunted" neo-theme-root neo-theme="dark">
   <head>
     <meta charset="utf-8" />
     <script>
       try {
-        document.documentElement.dataset.theme = localStorage.getItem("theme") || "haunted";
+        const theme = localStorage.getItem("theme");
+        if (theme === "glass") localStorage.setItem("glass", "on");
+        document.documentElement.dataset.theme = theme && theme !== "glass" ? theme : "haunted";
+        document.documentElement.toggleAttribute("data-glass", localStorage.getItem("glass") === "on");
       } catch {}
     </script>
     <link rel="icon" href="%sveltekit.assets%/favicon.png" />

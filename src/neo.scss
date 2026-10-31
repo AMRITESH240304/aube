@@ -1,0 +1,5 @@
+@use "../node_modules/@dvcol/neo-svelte/dist/styles/theme" as theme;
+
+@layer neo {
+  @include theme.theme;
+}

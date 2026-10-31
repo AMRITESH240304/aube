@@ -2,6 +2,7 @@
   import { ArrowRight, AudioLines, ChevronRight, Ghost } from "@lucide/svelte";
   import { formatDuration, recorder } from "$lib/recorder.svelte";
   import { theme } from "$lib/theme.svelte";
+  import Button from "./Button.svelte";
 
   let { limit, onOpen, onViewAll }: { limit?: number; onOpen: (id: string) => void; onViewAll?: () => void } =
     $props();
@@ -27,7 +28,7 @@
       {#if !limit && all.length}<span class="ml-1 text-base font-normal text-zinc-500">{all.length}</span>{/if}
     </h2>
     {#if onViewAll && all.length > shown.length}
-      <button class="btn" onclick={onViewAll}>View all {all.length}<ArrowRight class="size-3.5" aria-hidden="true" /></button>
+      <Button onclick={onViewAll}>View all {all.length}<ArrowRight class="size-3.5" aria-hidden="true" /></Button>
     {/if}
   </div>
 
