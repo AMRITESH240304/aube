@@ -78,7 +78,8 @@ let tidyInstructions = """
     When the speaker corrects themselves ("no wait", "I mean", "actually", "sorry"), keep only the corrected \
     version. Add punctuation and capital letters. When the speaker lists several things (tasks, points, items), \
     put each one on its own line and number it, keeping any lead-in line they said. Never turn something that \
-    wasn't a list into one, and never add an item. Keep every other word, the meaning and the tone.
+    wasn't a list into one, and never add an item. Keep the speaker's line breaks, every other word, the meaning \
+    and the tone.
 
     Examples:
     Dictation: um so can you send me the uh the report by Monday
@@ -177,7 +178,7 @@ func cleanupUnavailableReason() -> String? {
 }
 
 enum Phase {
-    case listening, tidying, done
+    case listening, tidying, done, fixed
 }
 
 final class Overlay: ObservableObject {
@@ -240,13 +241,14 @@ struct NotchView: View {
         case .listening: "Listening"
         case .tidying: "Tidying up"
         case .done: "Pasted"
+        case .fixed: "Edited"
         }
     }
 
     var shown: String {
         switch overlay.phase {
         case .listening: overlay.heard
-        case .tidying, .done: overlay.tidied.isEmpty ? overlay.heard : overlay.tidied
+        case .tidying, .done, .fixed: overlay.tidied.isEmpty ? overlay.heard : overlay.tidied
         }
     }
 
@@ -457,6 +459,8 @@ final class Listening {
 final class Dictation {
     let key: TalkKey
     let cleanup: Bool
+    let spokenEdits: Bool
+    let voiceFixes: Bool
     let engine: OllamaEngine
     let notch = Notch()
     var status = Status()
@@ -467,10 +471,14 @@ final class Dictation {
     var pressedAt = Date()
     var revealing: DispatchWorkItem?
     var finishing = false
+    var typed: [String] = []
+    var typedIn: pid_t?
 
-    init(key: TalkKey, cleanup: Bool, engine: OllamaEngine) {
+    init(key: TalkKey, cleanup: Bool, spokenEdits: Bool, voiceFixes: Bool, engine: OllamaEngine) {
         self.key = key
         self.cleanup = cleanup
+        self.spokenEdits = spokenEdits
+        self.voiceFixes = voiceFixes
         self.engine = engine
     }
 
@@ -535,8 +543,13 @@ final class Dictation {
         }) {
             monitors.append(monitor)
         }
-        if let monitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown, handler: { _ in
-            MainActor.assumeIsolated { self.otherKeyPressed() }
+        if let monitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown, handler: { event in
+            MainActor.assumeIsolated { self.otherKeyPressed(event) }
+        }) {
+            monitors.append(monitor)
+        }
+        if let monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { _ in
+            MainActor.assumeIsolated { self.typed = [] }
         }) {
             monitors.append(monitor)
         }
@@ -551,7 +564,9 @@ final class Dictation {
         }
     }
 
-    func otherKeyPressed() {
+    func otherKeyPressed(_ event: NSEvent) {
+        guard event.cgEvent?.getIntegerValueField(.eventSourceUserData) != sentByAube else { return }
+        typed = []
         if listening != nil, !finishing { abandon() }
     }
 
@@ -600,22 +615,28 @@ final class Dictation {
         Task {
             let heard = await listening.finish()
             notch.overlay.heard = heard
-            var text = heard
-            let tidyTimeout: Double
-            if case .ollama = engine {
-                tidyTimeout = 20
+            if voiceFixes, let fix = Fix(heard) {
+                notch.overlay.tidied = fixTyped(fix) ? fix.done : "Nothing to remove"
+                notch.overlay.phase = .fixed
+                try? await Task.sleep(for: .seconds(0.9))
             } else {
-                tidyTimeout = 4
-            }
-            if cleanup, notch.overlay.note == nil, !heard.isEmpty,
-               let tidied = await within(tidyTimeout, { await tidy(heard) }) {
-                notch.overlay.tidied = tidied
-                text = tidied
-            }
-            if !text.isEmpty {
-                paste(text)
-                notch.overlay.phase = .done
-                try? await Task.sleep(for: .seconds(0.6))
+                var text = spokenEdits ? applySpokenEdits(heard) : heard
+                let tidyTimeout: Double
+                if case .ollama = engine {
+                    tidyTimeout = 20
+                } else {
+                    tidyTimeout = 4
+                }
+                if cleanup, notch.overlay.note == nil, text.contains(where: \.isLetter),
+                   let tidied = await within(tidyTimeout, { await tidy(text) }) {
+                    notch.overlay.tidied = tidied
+                    text = keepingBreaks(of: text, around: tidied)
+                }
+                if !text.isEmpty {
+                    paste(text)
+                    notch.overlay.phase = .done
+                    try? await Task.sleep(for: .seconds(0.6))
+                }
             }
             self.listening = nil
             finishing = false
@@ -627,18 +648,64 @@ final class Dictation {
         let board = NSPasteboard.general
         board.clearContents()
         board.setString(text, forType: .string)
+        press(vKey, .maskCommand)
 
+        let app = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        if app != typedIn {
+            typed = []
+            typedIn = app
+        }
+        typed.append(text)
+    }
+
+    func fixTyped(_ fix: Fix) -> Bool {
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier != typedIn {
+            typed = []
+        }
+        let last = typed.last ?? ""
+        switch fix {
+        case .undo:
+            guard !last.isEmpty else { return false }
+            keep("")
+        case .everything:
+            guard !typed.isEmpty else { return false }
+            press(deleteKey, times: typed.joined().count)
+            typed = []
+        case .lastWord where !last.isEmpty:
+            keep(withoutLastWord(last))
+        case .lastLine where last.contains(where: \.isNewline):
+            keep(String(last[..<last.lastIndex(where: \.isNewline)!]))
+        case .lastWord:
+            press(deleteKey, .maskAlternate)
+        case .lastLine:
+            press(deleteKey, .maskCommand)
+            typed = []
+        }
+        return true
+    }
+
+    func keep(_ text: String) {
+        press(deleteKey, times: typed.removeLast().count - text.count)
+        if !text.isEmpty {
+            typed.append(text)
+        }
+    }
+
+    func press(_ key: CGKeyCode, _ flags: CGEventFlags = [], times: Int = 1) {
         let source = CGEventSource(stateID: .combinedSessionState)
-        for keyDown in [true, false] {
-            let event = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: keyDown)
-            event?.flags = .maskCommand
-            event?.post(tap: .cghidEventTap)
+        for _ in 0..<times {
+            for keyDown in [true, false] {
+                let event = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: keyDown)
+                event?.flags = flags
+                event?.setIntegerValueField(.eventSourceUserData, value: sentByAube)
+                event?.post(tap: .cghidEventTap)
+            }
         }
     }
 }
 
 guard let key = argument("--key").flatMap(TalkKey.init(rawValue:)) else {
-    emit(Status(error: "usage: aube-dictate --key fn|right-option|right-command|right-control|right-shift [--language id] [--no-cleanup] [--ask-for-access]"))
+    emit(Status(error: "usage: aube-dictate --key fn|right-option|right-command|right-control|right-shift [--language id] [--no-cleanup] [--no-spoken-edits] [--no-voice-fixes] [--ask-for-access]"))
     exit(1)
 }
 
@@ -653,6 +720,8 @@ MainActor.assumeIsolated {
     let dictation = Dictation(
         key: key,
         cleanup: !CommandLine.arguments.contains("--no-cleanup"),
+        spokenEdits: !CommandLine.arguments.contains("--no-spoken-edits"),
+        voiceFixes: !CommandLine.arguments.contains("--no-voice-fixes"),
         engine: engine
     )
     let askForAccess = CommandLine.arguments.contains("--ask-for-access")

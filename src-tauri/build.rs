@@ -13,7 +13,11 @@ fn main() {
     build_sidecar(&["stt/main.swift"], "aube-stt");
     build_sidecar(&["shared/Ollama.swift", "notes/main.swift"], "aube-notes");
     build_sidecar(
-        &["shared/Ollama.swift", "dictate/main.swift"],
+        &[
+            "shared/Ollama.swift",
+            "dictate/Commands.swift",
+            "dictate/main.swift",
+        ],
         "aube-dictate",
     );
     build_diarizer();

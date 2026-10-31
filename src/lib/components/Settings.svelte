@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
-  import { dictation, TALK_KEYS } from "$lib/dictation.svelte";
+  import { dictation, TALK_KEYS, VOICE_COMMANDS } from "$lib/dictation.svelte";
 
   type LlmProvider = "apple" | "ollama";
   type LlmSettings = { provider: LlmProvider; url: string; model: string };
@@ -248,6 +248,22 @@
       {/if}
     </span>
   </label>
+
+  {#each VOICE_COMMANDS as command (command.setting)}
+    <label class="flex items-start gap-3 text-sm">
+      <input
+        type="checkbox"
+        class="mt-0.5 size-4 accent-zinc-900 dark:accent-white"
+        checked={dictation.settings[command.setting]}
+        disabled={!on}
+        onchange={(e) => dictation.update({ [command.setting]: e.currentTarget.checked })}
+      />
+      <span>
+        <span class="font-medium">{command.title}</span>
+        <span class="block text-zinc-500">{command.detail}</span>
+      </span>
+    </label>
+  {/each}
 
   {#if on}
     <div class="space-y-2">
