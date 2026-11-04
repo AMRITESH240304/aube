@@ -217,5 +217,5 @@
     {empty}
     actions={copyButton}
   />
-  <div class="h-20 shrink-0"></div>
+  {#if !recorder.status}<div class="h-20 shrink-0"></div>{/if}
 </div>

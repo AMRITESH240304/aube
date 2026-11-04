@@ -9,12 +9,34 @@
   let {
     view,
     query = $bindable(),
+    openId,
     onNavigate,
-  }: { view: View; query: string; onNavigate: (view: View) => void } = $props();
+    onOpen,
+  }: {
+    view: View;
+    query: string;
+    openId: string | null;
+    onNavigate: (view: View) => void;
+    onOpen: (id: string) => void;
+  } = $props();
 
   let search: HTMLInputElement;
 
-  const isActive = (next: View) => !query.trim() && next.kind === view.kind;
+  const isActive = (next: View) => !openId && !query.trim() && next.kind === view.kind;
+  const live = $derived(recorder.status);
+  const past = $derived(recorder.recordings.filter((r) => r.id !== live?.id));
+  const watchingLive = $derived(!!live && !openId && !query.trim() && view.kind === "home");
+
+  const DAY = 86_400_000;
+
+  function when(ms: number) {
+    const date = new Date(ms);
+    const days = Math.round((new Date().setHours(0, 0, 0, 0) - new Date(ms).setHours(0, 0, 0, 0)) / DAY);
+    if (days === 0) return date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    if (days === 1) return "Yesterday";
+    if (days < 7) return date.toLocaleDateString(undefined, { weekday: "short" });
+    return date.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+  }
 
   function onKeydown(e: KeyboardEvent) {
     if (e.key === "f" && (e.metaKey || e.ctrlKey)) {
@@ -43,8 +65,26 @@
   </button>
 {/snippet}
 
+{#snippet recordingItem(title: string, active: boolean, onclick: () => void, subtitle: string, isLive = false)}
+  <li>
+    <button
+      class={[
+        "flex w-full min-w-0 flex-col rounded-md px-2 py-1.5 text-left hover:bg-zinc-800/70",
+        active && "bg-[rgb(var(--glow)/0.12)] hover:bg-[rgb(var(--glow)/0.16)]",
+      ]}
+      aria-current={active ? "page" : undefined}
+      {onclick}
+    >
+      <span class="w-full truncate text-sm">{title}</span>
+      <span class="flex items-center gap-1.5 text-xs text-zinc-500 tabular-nums">
+        {#if isLive}<span class="ember size-1.5 rounded-full" aria-hidden="true"></span>{/if}{subtitle}
+      </span>
+    </button>
+  </li>
+{/snippet}
+
 <nav
-  class="flex w-60 shrink-0 flex-col gap-4 border-r border-zinc-200 bg-zinc-50 p-3 pt-11 dark:border-zinc-800 dark:bg-zinc-900/60"
+  class="flex w-60 shrink-0 flex-col gap-4 border-r border-zinc-200 bg-zinc-50 p-3 pt-11 dark:border-white/[0.07] dark:bg-white/[0.025]"
   aria-label="Sidebar"
 >
   <p class="flex items-center gap-2 px-2 font-[family-name:var(--display-font)] text-base font-semibold tracking-wide">
@@ -70,10 +110,21 @@
   <div class="space-y-0.5">
     {@render navItem("Home", { kind: "home" }, House)}
     {@render navItem("All recordings", { kind: "all" }, AudioLines, recorder.recordings.length)}
-  </div>
-
-  <div class="mt-auto">
     {@render navItem("Settings", { kind: "settings" }, Settings)}
   </div>
+
+  {#if live || past.length}
+    <section class="-mx-1 flex min-h-0 flex-1 flex-col" aria-labelledby="sidebar-recordings">
+      <p id="sidebar-recordings" class="mb-1.5 px-3 text-[11px] tracking-[0.08em] text-zinc-500 uppercase">Recordings</p>
+      <ul class="min-h-0 space-y-0.5 overflow-y-auto px-1">
+        {#if live}
+          {@render recordingItem(live.title, watchingLive, () => onNavigate({ kind: "home" }), "Now", true)}
+        {/if}
+        {#each past as recording (recording.id)}
+          {@render recordingItem(recording.title, recording.id === openId, () => onOpen(recording.id), when(recording.startedAt))}
+        {/each}
+      </ul>
+    </section>
+  {/if}
 
 </nav>

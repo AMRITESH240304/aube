@@ -28,13 +28,17 @@
   --record: 255 90 60;
   --primary-bg: linear-gradient(180deg, #d9c6ff, #a985ff);
   --primary-fg: #0c0815;
+  --stop-bg: var(--primary-bg);
+  --stop-fg: var(--primary-fg);
+  --wave-you: #d9c6ff;
+  --wave-them: #7dffcf;
   --radius-btn: 9999px;
   --display-font: var(--font-haunt);
   --display-weight: 600;
   --display-tracking: 0.01em;
   --display-shadow: 0 0 22px rgb(var(--glow) / 0.28);
   --backdrop:
-    radial-gradient(60rem 40rem at 85% -10%, rgb(var(--glow) / 0.16), transparent 60%),
+    radial-gradient(60rem 40rem at 90% -10%, rgb(var(--glow) / 0.18), transparent 60%),
     radial-gradient(50rem 30rem at 0% 110%, rgb(120 255 207 / 0.06), transparent 60%), var(--color-zinc-950);
 }
 
@@ -63,6 +67,10 @@
   --glow: 185 166 255;
   --primary-bg: #f4f4f5;
   --primary-fg: #09090b;
+  --stop-bg: var(--color-red-600);
+  --stop-fg: #fff;
+  --wave-you: var(--color-zinc-200);
+  --wave-them: #b9a6ff;
   --display-font: var(--font-sans);
   --display-weight: 400;
   --display-tracking: -0.035em;
@@ -89,6 +97,10 @@
   --glow: 238 245 107;
   --primary-bg: #eef56b;
   --primary-fg: #121210;
+  --stop-bg: var(--color-red-600);
+  --stop-fg: #fff;
+  --wave-you: var(--color-zinc-100);
+  --wave-them: #eef56b;
   --display-font: var(--font-sans);
   --display-weight: 800;
   --display-tracking: -0.045em;

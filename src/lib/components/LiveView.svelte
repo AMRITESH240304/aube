@@ -46,5 +46,4 @@
     empty={status.transcriptionError ?? "Listening… every word spoken, by you or the call, will surface here."}
     follow
   />
-  <div class="h-20 shrink-0"></div>
 </div>

@@ -33,7 +33,7 @@
 <div class="fixed inset-x-0 top-0 z-50 h-8" data-tauri-drag-region></div>
 
 <div class="flex h-screen">
-  <Sidebar {view} bind:query onNavigate={navigate} />
+  <Sidebar {view} bind:query {openId} onNavigate={navigate} onOpen={openRecording} />
 
   <div class="relative flex min-w-0 flex-1 flex-col">
     <main class="flex min-h-0 flex-1 flex-col">
