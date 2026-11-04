@@ -71,7 +71,7 @@
 <section
   bind:this={panel}
   class={[
-    "relative flex shrink-0 flex-col border-t border-zinc-200 dark:border-zinc-800",
+    "relative flex shrink-0 flex-col border-t border-zinc-200 dark:border-white/[0.08] dark:bg-zinc-950/60",
     !(open && height) && "max-h-[40vh]",
   ]}
   style:height={open && height ? `${height}px` : undefined}
