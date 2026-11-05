@@ -25,7 +25,7 @@
 <div class="flex min-h-0 flex-1 flex-col">
   <div class="min-h-0 flex-1 overflow-y-auto">
     <div class="mx-auto w-full max-w-3xl px-8 py-8">
-      <h2 class="truncate text-xl font-semibold">{status.title}</h2>
+      <h1 class="truncate text-xl font-semibold">{status.title}</h1>
       <p class="mb-6 text-sm text-zinc-500 tabular-nums">
         {status.paused ? "Paused" : "Recording"} · {formatDuration(status.elapsedSecs)}
       </p>

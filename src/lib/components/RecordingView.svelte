@@ -121,9 +121,8 @@
 
 {#snippet copyButton()}
   {#if segments.length}
-    <Button onclick={copy}>
-      {#if copied}<Check class="size-3.5" aria-hidden="true" />{:else}<Copy class="size-3.5" aria-hidden="true" />{/if}
-      {copied ? "Copied" : "Copy"}
+    <Button onclick={copy} aria-label={copied ? "Copied" : "Copy transcript"} title="Copy transcript">
+      {#if copied}<Check class="size-4" aria-hidden="true" />{:else}<Copy class="size-4" aria-hidden="true" />{/if}
     </Button>
   {/if}
 {/snippet}
@@ -132,7 +131,7 @@
   <div class="min-h-0 flex-1 overflow-y-auto">
     <div class="mx-auto w-full max-w-3xl px-8 py-8">
       <div class="mb-6 flex items-start gap-4">
-        <Button onclick={onBack} aria-label="Back to recordings"><ArrowLeft class="size-4" aria-hidden="true" />Back</Button>
+        <Button onclick={onBack} aria-label="Back to recordings" title="Back"><ArrowLeft class="size-4" aria-hidden="true" /></Button>
         <div class="min-w-0 flex-1">
           {#if renaming}
             <form class="flex gap-2" onsubmit={(e) => (e.preventDefault(), rename())}>
@@ -147,19 +146,28 @@
               <Button primary disabled={busy} onclick={rename}>Save</Button>
             </form>
           {:else}
-            <h2 class="truncate text-xl font-semibold">{recording.title}</h2>
+            <h1 class="truncate text-xl font-semibold">{recording.title}</h1>
           {/if}
           <p class="text-sm text-zinc-500 tabular-nums">
             {new Date(recording.startedAt).toLocaleString()} · {formatDuration(recording.durationSecs)}
           </p>
         </div>
         {#if !renaming && !confirmDelete}
-          <Button onclick={() => share(false)} disabled={busy}>
+          <Button
+            onclick={() => share(false)}
+            disabled={busy}
+            aria-label={shared === "copy" ? "Copied" : "Copy as Markdown"}
+            title="Copy as Markdown"
+          >
             {#if shared === "copy"}<Check class="size-4" aria-hidden="true" />{:else}<Copy class="size-4" aria-hidden="true" />{/if}
-            {shared === "copy" ? "Copied" : "Copy .md"}
           </Button>
-          <Button onclick={() => share(true)} disabled={busy}>
-            <Download class="size-4" aria-hidden="true" />{shared === "save" ? "Saved to Downloads" : "Save .md"}
+          <Button
+            onclick={() => share(true)}
+            disabled={busy}
+            aria-label={shared === "save" ? "Saved to Downloads" : "Save Markdown to Downloads"}
+            title="Save Markdown to Downloads"
+          >
+            {#if shared === "save"}<Check class="size-4" aria-hidden="true" />{:else}<Download class="size-4" aria-hidden="true" />{/if}
           </Button>
           <Button onclick={() => ((title = recording.title), (renaming = true))} aria-label="Rename" title="Rename">
             <PencilLine class="size-4" aria-hidden="true" />
@@ -182,7 +190,7 @@
         <p class="mb-6 text-sm text-red-700 dark:text-red-400" role="alert">{actionError}</p>
       {/if}
       <div class="mb-5 flex items-center gap-3">
-        <NeoTabs bind:active={tab} pill rounded={theme.current !== "terminal"} aria-label="View">
+        <NeoTabs bind:active={tab} pill elevation={0} rounded={theme.current !== "terminal"} aria-label="View">
           {#each [["summary", "Summary", Sparkles], ["notes", "My notes", NotebookPen]] as const as [id, label, Icon] (id)}
             <NeoTab tabId={id}>
               <span class="flex items-center gap-1.5"><Icon class="size-3.5" aria-hidden="true" />{label}</span>
@@ -191,7 +199,7 @@
         </NeoTabs>
         {#if tab === "summary" && !writingSummary && transcript?.segments.length}
           <Button class="ml-auto" onclick={writeSummary}>
-            {summary ? "Rewrite summary" : "Write summary"}
+            {summary ? "Rewrite" : "Write summary"}
           </Button>
         {/if}
       </div>

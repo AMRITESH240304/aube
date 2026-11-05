@@ -26,7 +26,7 @@
   color-scheme: dark;
   --glow: 180 140 255;
   --record: 255 90 60;
-  --primary-bg: linear-gradient(180deg, #d9c6ff, #a985ff);
+  --primary-bg: #c4a6ff;
   --primary-fg: #0c0815;
   --stop-bg: var(--primary-bg);
   --stop-fg: var(--primary-fg);
@@ -36,10 +36,7 @@
   --display-font: var(--font-haunt);
   --display-weight: 600;
   --display-tracking: 0.01em;
-  --display-shadow: 0 0 22px rgb(var(--glow) / 0.28);
-  --backdrop:
-    radial-gradient(60rem 40rem at 90% -10%, rgb(var(--glow) / 0.18), transparent 60%),
-    radial-gradient(50rem 30rem at 0% 110%, rgb(120 255 207 / 0.06), transparent 60%), var(--color-zinc-950);
+  --backdrop: var(--color-zinc-950);
 }
 
 :root[data-theme="terminal"] {
@@ -74,7 +71,6 @@
   --display-font: var(--font-sans);
   --display-weight: 400;
   --display-tracking: -0.035em;
-  --display-shadow: none;
   --backdrop:
     linear-gradient(to right, rgb(255 255 255 / 0.035) 1px, transparent 1px) 0 0 / 72px 72px,
     linear-gradient(to bottom, rgb(255 255 255 / 0.035) 1px, transparent 1px) 0 0 / 72px 72px, var(--color-zinc-950);
@@ -104,8 +100,7 @@
   --display-font: var(--font-sans);
   --display-weight: 800;
   --display-tracking: -0.045em;
-  --display-shadow: none;
-  --backdrop: radial-gradient(50rem 30rem at 50% -20%, rgb(238 245 107 / 0.05), transparent 70%), var(--color-zinc-950);
+  --backdrop: var(--color-zinc-950);
 }
 
 :root {
@@ -114,6 +109,13 @@
   --neo-color-primary: var(--color-blue-600);
   --neo-font-family: var(--font-sans);
   --neo-btn-margin: 0;
+  --neo-btn-min-height: 2rem;
+  --neo-btn-padding: 0 0.75rem;
+  --neo-btn-padding-empty: 0 0.5rem;
+}
+
+:root .neo-button {
+  font-size: 0.875rem;
 }
 
 html {
@@ -136,24 +138,15 @@ body {
   color: var(--primary-fg);
 }
 
+:root .neo-button.aube-primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
 h1,
 h2 {
   font-family: var(--display-font);
   font-weight: var(--display-weight);
   letter-spacing: var(--display-tracking);
-  text-shadow: var(--display-shadow);
-}
-
-:root[data-theme="dusk"] body::before {
-  content: "";
-  position: fixed;
-  inset: -20%;
-  pointer-events: none;
-  background:
-    radial-gradient(30rem 12rem at 20% 30%, rgb(var(--glow) / 0.07), transparent 70%),
-    radial-gradient(36rem 14rem at 75% 70%, rgb(200 190 255 / 0.05), transparent 70%);
-  filter: blur(20px);
-  animation: drift 60s ease-in-out infinite alternate;
 }
 
 :root[data-theme="terminal"] .text-xs {
@@ -185,12 +178,6 @@ h2 {
     0 0 32px rgb(var(--record) / 0.25);
 }
 
-@keyframes drift {
-  to {
-    transform: translate3d(6%, -4%, 0) scale(1.08);
-  }
-}
-
 @keyframes flicker {
   0%, 100% { opacity: 1; transform: scale(1); }
   8% { opacity: 0.72; }
@@ -201,7 +188,6 @@ h2 {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :root[data-theme="dusk"] body::before,
   .ember {
     animation: none;
   }

@@ -2,10 +2,10 @@ export const THEMES = [
   {
     id: "dusk",
     name: "Dusk",
-    note: "Moonlit violet and drifting mist",
-    bg: "radial-gradient(circle at 85% 0%, #3a2a5c, #0c0815 70%)",
+    note: "Moonlit violet",
+    bg: "#0c0815",
     fg: "#e9e2f4",
-    accent: "linear-gradient(180deg, #d9c6ff, #a985ff)",
+    accent: "#c4a6ff",
     font: '"Iowan Old Style", serif',
     weight: 600,
     radius: "9999px",

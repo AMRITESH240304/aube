@@ -22,10 +22,10 @@
 
 <section aria-labelledby="recordings-heading">
   <div class="mb-6 flex items-center justify-between">
-    <h2 id="recordings-heading" class="text-xl font-semibold">
+    <h1 id="recordings-heading" class="text-xl font-semibold">
       {title}
       {#if !limit && all.length}<span class="ml-1 text-base font-normal text-zinc-500">{all.length}</span>{/if}
-    </h2>
+    </h1>
     {#if onViewAll && all.length > shown.length}
       <Button onclick={onViewAll}>View all {all.length}<ArrowRight class="size-3.5" aria-hidden="true" /></Button>
     {/if}
@@ -40,7 +40,7 @@
       </span>
       <h3 class="mt-3 font-semibold">No recordings yet</h3>
       <p class="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-        Press Start recording when your meeting starts, and every word will be kept.
+        Press Record when your meeting starts, and every word will be kept.
       </p>
     </div>
   {:else}
