@@ -55,9 +55,9 @@ impl Echo {
             self.aec.process_capture(false, false, None, &mut mic);
             for &sample in mic.view(0, 0) {
                 let sample = sample / SCALE;
-                cleaned.extend((1..=STEP).map(|i| {
-                    self.last + (sample - self.last) * i as f32 / STEP as f32
-                }));
+                cleaned.extend(
+                    (1..=STEP).map(|i| self.last + (sample - self.last) * i as f32 / STEP as f32),
+                );
                 self.last = sample;
             }
         }

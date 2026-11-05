@@ -37,6 +37,8 @@ pub fn run() {
             recorder::stop_recording,
             recorder::set_paused,
             recorder::recording_status,
+            recorder::microphones,
+            recorder::set_microphone,
             library::list_recordings,
             library::rename_recording,
             library::delete_recording,
