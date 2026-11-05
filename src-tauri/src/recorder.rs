@@ -129,14 +129,102 @@ fn open_stream(
     Ok((stream, supported.sample_rate()))
 }
 
-fn open_microphone(
-    host: &cpal::Host,
-    tx: Chunks,
-    shared: &Arc<Shared>,
-) -> Result<(cpal::Stream, u32)> {
-    let device = host.default_input_device().ok_or("No microphone found.")?;
-    let config = device.default_input_config().map_err(err)?;
-    open_stream(&device, config, Source::Mic, tx, shared)
+const MICROPHONE: &str = "microphone";
+
+fn chosen_microphone(host: &cpal::Host, app: &AppHandle) -> Option<cpal::Device> {
+    app.state::<Db>()
+        .setting(MICROPHONE)
+        .and_then(|id| id.parse().ok())
+        .and_then(|id| host.device_by_id(&id))
+        .filter(DeviceTrait::supports_input)
+        .or_else(|| host.default_input_device())
+}
+
+struct Microphone {
+    stream: Option<cpal::Stream>,
+    device: Option<cpal::DeviceId>,
+    checked: Instant,
+}
+
+impl Microphone {
+    fn open(
+        host: &cpal::Host,
+        app: &AppHandle,
+        tx: &Chunks,
+        shared: &Arc<Shared>,
+    ) -> Result<(Self, u32)> {
+        let device = chosen_microphone(host, app).ok_or("No microphone found.")?;
+        let config = device.default_input_config().map_err(err)?;
+        let (stream, rate) = open_stream(&device, config, Source::Mic, tx.clone(), shared)?;
+        let mic = Self {
+            stream: Some(stream),
+            device: device.id().ok(),
+            checked: Instant::now(),
+        };
+        Ok((mic, rate))
+    }
+
+    fn follow(
+        &mut self,
+        host: &cpal::Host,
+        app: &AppHandle,
+        tx: &Chunks,
+        shared: &Arc<Shared>,
+        mixer: &mut Mixer,
+    ) {
+        if self.checked.elapsed() < DEVICE_CHECK {
+            return;
+        }
+        self.checked = Instant::now();
+        if chosen_microphone(host, app).and_then(|device| device.id().ok()) == self.device {
+            return;
+        }
+        self.stream = None;
+        match Self::open(host, app, tx, shared) {
+            Ok((mic, rate)) => {
+                mixer.set_mic_rate(rate);
+                *self = mic;
+            }
+            Err(e) => eprintln!("couldn't switch microphone: {e}"),
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct InputDevice {
+    id: String,
+    name: String,
+}
+
+#[derive(Serialize)]
+pub struct Microphones {
+    chosen: Option<String>,
+    devices: Vec<InputDevice>,
+}
+
+#[tauri::command(async)]
+pub fn microphones(app: AppHandle) -> Result<Microphones> {
+    let devices = cpal::default_host()
+        .input_devices()
+        .map_err(err)?
+        .filter_map(|device| {
+            Some(InputDevice {
+                id: device.id().ok()?.to_string(),
+                name: device.description().ok()?.name().to_owned(),
+            })
+        })
+        .collect();
+    let chosen = app
+        .state::<Db>()
+        .setting(MICROPHONE)
+        .filter(|id| !id.is_empty());
+    Ok(Microphones { chosen, devices })
+}
+
+#[tauri::command]
+pub fn set_microphone(app: AppHandle, id: Option<String>) -> Result<()> {
+    app.state::<Db>()
+        .set_setting(MICROPHONE, id.as_deref().unwrap_or(""))
 }
 
 // An input stream on an output device is a Core Audio tap on macOS 14.2+
@@ -163,7 +251,7 @@ fn open_system_audio(
     open_stream(&device, config, Source::System, tx, shared)
 }
 
-const OUTPUT_CHECK: Duration = Duration::from_secs(1);
+const DEVICE_CHECK: Duration = Duration::from_secs(1);
 
 struct SystemAudio {
     stream: Option<cpal::Stream>,
@@ -189,7 +277,7 @@ impl SystemAudio {
         shared: &Arc<Shared>,
         mixer: &mut Mixer,
     ) {
-        if self.checked.elapsed() < OUTPUT_CHECK {
+        if self.checked.elapsed() < DEVICE_CHECK {
             return;
         }
         self.checked = Instant::now();
@@ -228,7 +316,7 @@ fn record(
 ) -> Result<()> {
     let host = cpal::default_host();
     let (tx, rx) = mpsc::channel();
-    let (mic, mic_rate) = match open_microphone(&host, tx.clone(), &shared) {
+    let (mut mic, mic_rate) = match Microphone::open(&host, &app, &tx, &shared) {
         Ok(opened) => opened,
         Err(e) => {
             let _ = ready.send(Err(e.clone()));
@@ -247,6 +335,7 @@ fn record(
     let recorded_secs = recorded as f64 / OUTPUT_RATE as f64;
     let mut batches = Batches::new(app.clone(), id.clone(), recorded_secs);
     while !shared.stop.load(Relaxed) {
+        mic.follow(&host, &app, &tx, &shared, &mut mixer);
         system.follow_default_output(&host, &tx, &shared, &mut mixer);
         let received = rx.recv_timeout(Duration::from_millis(100)).into_iter();
         for chunk in received.chain(rx.try_iter()) {

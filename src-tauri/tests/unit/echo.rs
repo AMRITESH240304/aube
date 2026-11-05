@@ -45,7 +45,8 @@ fn keeps_your_voice_while_the_call_talks_and_drops_the_call_alone() {
     let delay = SECOND / 25;
     let speaker: Vec<f32> = them.iter().map(|s| (s * 0.6).tanh() * 0.25).collect();
     let heard = |i: usize, lag: usize, gain: f32| {
-        i.checked_sub(delay + lag).map_or(0.0, |j| speaker[j] * gain)
+        i.checked_sub(delay + lag)
+            .map_or(0.0, |j| speaker[j] * gain)
     };
     let mic: Vec<f32> = (0..you.len())
         .map(|i| you[i] + heard(i, 0, 0.5) + heard(i, 111, 0.25) + heard(i, 480, 0.15))
@@ -54,7 +55,10 @@ fn keeps_your_voice_while_the_call_talks_and_drops_the_call_alone() {
 
     let mut echo = Echo::new();
     let frames: Vec<[f32; 2]> = mic.iter().zip(&call).map(|(m, c)| [*m, *c]).collect();
-    let cleaned: Vec<f32> = frames.chunks(SECOND / 10).flat_map(|c| echo.cancel(c)).collect();
+    let cleaned: Vec<f32> = frames
+        .chunks(SECOND / 10)
+        .flat_map(|c| echo.cancel(c))
+        .collect();
 
     let alone = 8 * SECOND..12 * SECOND;
     assert!(rms(&cleaned[alone.clone()]) < rms(&mic[alone]) * 0.05);

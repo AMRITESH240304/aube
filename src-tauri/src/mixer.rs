@@ -147,6 +147,10 @@ impl Mixer {
         }
     }
 
+    pub fn set_mic_rate(&mut self, rate: u32) {
+        self.mic.resampler = Resampler::new(rate);
+    }
+
     pub fn set_system_rate(&mut self, rate: u32) {
         match &mut self.system {
             Some(track) => track.resampler = Resampler::new(rate),

@@ -1,11 +1,35 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
-  import { Mic, Palette, Sparkles } from "@lucide/svelte";
+  import { Check, Mic, MicVocal, Palette, Sparkles } from "@lucide/svelte";
   import { dictation, TALK_KEYS, VOICE_COMMANDS } from "$lib/dictation.svelte";
   import { theme, THEMES } from "$lib/theme.svelte";
   import Button from "./Button.svelte";
   import Toggle from "./Toggle.svelte";
+
+  type Microphones = { chosen: string | null; devices: { id: string; name: string }[] };
+
+  let mics = $state<Microphones>({ chosen: null, devices: [] });
+  let micError = $state("");
+  const micMissing = $derived(!!mics.chosen && !mics.devices.some((d) => d.id === mics.chosen));
+
+  async function loadMics() {
+    try {
+      mics = await invoke<Microphones>("microphones");
+      micError = "";
+    } catch (e) {
+      micError = String(e);
+    }
+  }
+
+  async function chooseMic(id: string | null) {
+    try {
+      await invoke("set_microphone", { id });
+      mics.chosen = id;
+    } catch (e) {
+      micError = String(e);
+    }
+  }
 
   type LlmProvider = "apple" | "ollama";
   type LlmSettings = { provider: LlmProvider; url: string; model: string };
@@ -66,6 +90,9 @@
   onMount(() => {
     dictation.init();
     loadLlm();
+    loadMics();
+    const polling = setInterval(loadMics, 3000);
+    return () => clearInterval(polling);
   });
 
   const chosen = $derived(TALK_KEYS.find((k) => k.key === dictation.settings.key) ?? TALK_KEYS[0]);
@@ -123,6 +150,52 @@
       </button>
     {/each}
   </div>
+</section>
+
+<section aria-labelledby="microphone-heading" class="mb-8 space-y-4">
+  <div>
+    <h3 id="microphone-heading" class="flex items-center gap-2 font-semibold">
+      <MicVocal class="size-4 text-blue-600" aria-hidden="true" />Microphone
+    </h3>
+    <p class="mt-1 text-sm text-zinc-500">
+      Aube records your voice from this mic and switches over within a second when you change it, even mid-recording.
+    </p>
+  </div>
+
+  <fieldset>
+    <legend class="sr-only">Microphone</legend>
+    <div class="max-h-56 space-y-0.5 overflow-y-auto rounded-lg border border-zinc-300 p-1 dark:border-zinc-700">
+      {#each [{ id: null, name: "Mac's default", hint: "Follows whatever's plugged in" }, ...mics.devices.map((d) => ({ ...d, hint: "" }))] as option (option.id)}
+        {@const selected = mics.chosen === option.id}
+        <label
+          class={[
+            "flex cursor-pointer items-center gap-3 rounded-md px-3 py-2 text-sm focus-within:outline-2 focus-within:outline-blue-600",
+            selected ? "bg-zinc-200 font-medium dark:bg-zinc-800" : "hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
+          ]}
+        >
+          <input
+            type="radio"
+            name="microphone"
+            class="sr-only"
+            checked={selected}
+            onchange={() => chooseMic(option.id)}
+          />
+          <span class="min-w-0 flex-1">
+            <span class="block truncate">{option.name}</span>
+            {#if option.hint}<span class="block text-xs font-normal text-zinc-500">{option.hint}</span>{/if}
+          </span>
+          {#if selected}<Check class="size-4 shrink-0" aria-hidden="true" />{/if}
+        </label>
+      {/each}
+    </div>
+  </fieldset>
+
+  {#if micMissing}
+    {@render notice("Your chosen mic isn't connected, so Aube is using your Mac's default until it's back.", "warn")}
+  {/if}
+  {#if micError}
+    {@render notice(micError, "error")}
+  {/if}
 </section>
 
 <section aria-labelledby="intelligence-heading" class="mb-8 space-y-4">
