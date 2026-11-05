@@ -91,7 +91,7 @@
   </div>
 {/snippet}
 
-<h2 class="mb-6 text-xl font-semibold">Settings</h2>
+<h1 class="mb-6 text-xl font-semibold">Settings</h1>
 
 <section aria-labelledby="appearance-heading" class="mb-8 space-y-4">
   <div>

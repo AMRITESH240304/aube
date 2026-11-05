@@ -11,6 +11,9 @@
 </script>
 
 <NeoButton
+  text={!primary}
+  elevation={0}
+  hover={primary ? 0 : -1}
   rounded={theme.current !== "terminal"}
   color={danger ? "var(--color-red-500)" : undefined}
   class={[primary && "aube-primary", className]}

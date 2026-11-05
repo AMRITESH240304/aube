@@ -26,10 +26,10 @@
 </script>
 
 <section aria-labelledby="results-heading">
-  <h2 id="results-heading" class="mb-6 text-xl font-semibold">
+  <h1 id="results-heading" class="mb-6 text-xl font-semibold">
     Results for “{term}”
     {#if matches?.length}<span class="ml-1 text-base font-normal text-zinc-500">{matches.length}</span>{/if}
-  </h2>
+  </h1>
   {#if matches === null}
     <div class="h-14 animate-pulse rounded-lg bg-zinc-100 dark:bg-zinc-900" aria-busy="true"></div>
   {:else if matches.length === 0}

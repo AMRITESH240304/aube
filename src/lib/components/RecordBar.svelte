@@ -79,18 +79,18 @@
     {/if}
 
     <div
-      class="pointer-events-auto flex items-center gap-2 rounded-[var(--radius-btn)] border border-zinc-200 bg-white/90 p-1.5 shadow-lg backdrop-blur-xl dark:border-zinc-800 dark:bg-zinc-900/80"
+      class="pointer-events-auto flex items-center gap-2 rounded-[var(--radius-btn)] border border-zinc-200 bg-white/90 p-1.5 shadow-lg dark:border-zinc-800 dark:bg-zinc-900"
     >
       {#if recorder.languages.length}
         <LanguagePicker />
       {/if}
       <Button primary disabled={recorder.installing} onclick={() => start(continuing)}>
         <span class="ember size-2.5 rounded-full" aria-hidden="true"></span>
-        {recorder.installing ? "Downloading…" : continuing ? "Continue recording" : "Start recording"}
+        {recorder.installing ? "Downloading…" : continuing ? "Continue" : "Record"}
       </Button>
       {#if continuing}
         <Button disabled={recorder.installing} onclick={() => start()}>
-          <Plus class="size-4" aria-hidden="true" />New note
+          <Plus class="size-4" aria-hidden="true" />New
         </Button>
       {/if}
     </div>
