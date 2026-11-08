@@ -53,6 +53,7 @@ fn your_lines_come_first_and_points_that_repeat_them_are_dropped() {
         headings: vec!["hiring".into()],
     };
     let combined = Combined {
+        title: "Hiring".into(),
         overview: "Hiring plans.".into(),
         sections: vec![placed("Hiring", &[0], &[0])],
         rewritten: vec!["Hire two engineers".into()],
@@ -77,6 +78,7 @@ fn a_note_reaches_the_summary_in_the_summarys_words() {
         headings: Vec::new(),
     };
     let combined = Combined {
+        title: "Budget".into(),
         overview: String::new(),
         sections: vec![placed("Budget", &[0], &[0])],
         rewritten: vec!["Ask finance for the Q3 numbers.".into()],
@@ -102,6 +104,7 @@ fn nothing_is_lost_when_the_model_skips_or_repeats_indices() {
         headings: Vec::new(),
     };
     let combined = Combined {
+        title: "Launch".into(),
         overview: String::new(),
         sections: vec![placed("Launch", &[0, 0, 9], &[1, 1])],
         rewritten: Vec::new(),
@@ -139,6 +142,12 @@ fn only_uncovered_time_is_batched_again() {
         gaps(&[(0.0, 300.0), (500.0, 800.0)], 800.0),
         [(300.0, 500.0)]
     );
+}
+
+#[test]
+fn blank_generated_titles_never_replace_the_recording_name() {
+    assert_eq!(usable_title("  Weekly launch review \n"), Some("Weekly launch review"));
+    assert_eq!(usable_title(" \n\t "), None);
 }
 
 #[test]

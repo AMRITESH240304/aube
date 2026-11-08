@@ -41,6 +41,7 @@ struct FoldedNotes: Codable {
 }
 
 struct Overview: Codable {
+    let title: String
     let overview: String
 }
 
@@ -51,6 +52,7 @@ struct Section: Codable {
 }
 
 struct Summary: Codable {
+    let title: String
     let overview: String
     let sections: [Section]
     let rewritten: [String]
@@ -161,6 +163,11 @@ func headingsSchema(topics: Int) -> GenerationSchema {
 
 let overviewSchema = schema("Overview", [
     .init(
+        name: "title",
+        description: "A specific meeting title of two to six words, without a date",
+        schema: DynamicGenerationSchema(type: String.self)
+    ),
+    .init(
         name: "overview",
         description: "Two or three sentences on what the meeting covered and decided",
         schema: DynamicGenerationSchema(type: String.self)
@@ -199,9 +206,10 @@ let headingsInstructions = """
     """
 
 let overviewInstructions = """
-    You write the opening of a meeting summary: two or three sentences on what the meeting covered. \
-    Only call something a decision or an action if the topics say it was decided or assigned. \
-    Write in English.
+    You name and open a meeting summary. Give it a specific, useful title of two to six words based \
+    on what it covered; never use a date as the title. Then write two or three sentences on what the \
+    meeting covered. Only call something a decision or an action if the topics say it was decided or \
+    assigned. Write in English.
     """
 
 let placementInstructions = """
@@ -351,7 +359,7 @@ func briefOutline(_ topics: [Topic]) -> String {
 func combine(_ request: CombineRequest) async throws -> Summary {
     let topics = request.topics
     let outline = briefOutline(topics)
-    var prompt = "Meeting: \(request.title)\n\nTopics in order:\n" + outline
+    var prompt = "Topics in order:\n" + outline
     if !request.headings.isEmpty {
         prompt += "\n\nThe user organised their notes under these headings; reuse them where they fit: " + request.headings.joined(separator: ", ")
     }
@@ -374,14 +382,14 @@ func combine(_ request: CombineRequest) async throws -> Summary {
         grouped[heading, default: []].append(index)
     }
 
-    let overview = try await unlessDeclined("") {
+    let opening = try await unlessDeclined(Overview(title: request.title, overview: "")) {
         try await respond(
             overviewInstructions,
-            "Meeting: \(request.title)\n\n" + outline,
+            "Topics in order:\n" + outline,
             overviewSchema,
-            shape: #"{"overview":"two or three sentences"}"#,
+            shape: #"{"title":"short meeting title","overview":"two or three sentences"}"#,
             as: Overview.self
-        ).overview
+        )
     }
 
     var filed: [String: [Int]] = [:]
@@ -405,7 +413,8 @@ func combine(_ request: CombineRequest) async throws -> Summary {
         }
     }
     return Summary(
-        overview: overview,
+        title: opening.title,
+        overview: opening.overview,
         sections: headings.map { heading in
             Section(heading: heading, topics: grouped[heading, default: []], notes: filed[heading, default: []])
         },

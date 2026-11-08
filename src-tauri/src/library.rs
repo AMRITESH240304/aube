@@ -198,6 +198,16 @@ impl Db {
             .ok_or_else(|| "This recording no longer exists.".into())
     }
 
+    pub fn set_title(&self, id: &str, title: &str) -> Result<()> {
+        self.connection()
+            .execute(
+                "UPDATE recordings SET title = ?2 WHERE id = ?1",
+                params![id, title],
+            )
+            .map(drop)
+            .map_err(err)
+    }
+
     pub fn set_duration(&self, id: &str, secs: f64) -> Result<()> {
         self.connection()
             .execute(
@@ -610,13 +620,7 @@ pub fn rename_recording(db: State<'_, Db>, id: String, title: String) -> Result<
     if title.is_empty() {
         return Err("Give the recording a name.".into());
     }
-    db.connection()
-        .execute(
-            "UPDATE recordings SET title = ?2 WHERE id = ?1",
-            params![id, title],
-        )
-        .map(drop)
-        .map_err(err)
+    db.set_title(&id, title)
 }
 
 #[tauri::command]

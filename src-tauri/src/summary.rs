@@ -52,6 +52,7 @@ enum Missing {
 
 #[derive(Deserialize)]
 struct Combined {
+    title: String,
     overview: String,
     sections: Vec<Placed>,
     #[serde(default)]
@@ -282,9 +283,17 @@ fn summarise(app: &AppHandle, recording: &str, llm: &llm::Settings) -> Result<()
         &json!({ "title": title, "topics": topics, "notes": notes.lines, "headings": notes.headings }),
         llm,
     )?;
+    if let Some(title) = usable_title(&combined.title) {
+        db.set_title(recording, title)?;
+    }
     let mut summary = assemble(combined, &topics, &notes);
     summary.skipped = describe_missing(missing);
     db.set_summary(recording, &serde_json::to_string(&summary).map_err(err)?)
+}
+
+fn usable_title(title: &str) -> Option<&str> {
+    let title = title.trim();
+    (!title.is_empty()).then_some(title)
 }
 
 fn describe_missing(mut missing: Vec<(f64, f64, Missing)>) -> Vec<String> {
@@ -381,6 +390,7 @@ fn repeats(point: &str, note: &str) -> bool {
 
 fn assemble(combined: Combined, topics: &[Topic], notes: &Notes) -> Summary {
     let Combined {
+        title: _,
         overview,
         sections: placed,
         rewritten,
