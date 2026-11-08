@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import LiveView from "$lib/components/LiveView.svelte";
+  import NewRecordingView from "$lib/components/NewRecordingView.svelte";
   import RecordBar from "$lib/components/RecordBar.svelte";
   import RecordingView from "$lib/components/RecordingView.svelte";
   import Recordings from "$lib/components/Recordings.svelte";
@@ -22,6 +23,12 @@
     view = next;
     query = "";
     openId = null;
+    openAt = undefined;
+  }
+
+  function newRecording() {
+    recorder.draftNote = null;
+    navigate({ kind: "new" });
   }
 
   function openRecording(id: string, at?: number) {
@@ -50,6 +57,8 @@
               <SearchResults {query} onOpen={openRecording} />
             {:else if view.kind === "settings"}
               <Settings />
+            {:else if view.kind === "new"}
+              <NewRecordingView />
             {:else if view.kind === "home"}
               <Recordings limit={5} onOpen={openRecording} onViewAll={() => navigate({ kind: "all" })} />
             {:else}
@@ -59,6 +68,11 @@
         </div>
       {/if}
     </main>
-    <RecordBar continuing={open} onStarted={() => navigate({ kind: "home" })} onSaved={openRecording} />
+    <RecordBar
+      continuing={open}
+      onStarted={() => navigate({ kind: "home" })}
+      onNew={newRecording}
+      onSaved={openRecording}
+    />
   </div>
 </div>

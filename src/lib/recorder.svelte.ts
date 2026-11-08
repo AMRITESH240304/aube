@@ -23,6 +23,7 @@ export type Recording = {
 
 export type LiveTurn = { index: number; speaker: string | null; start: number; text: string };
 export type Language = { id: string; name: string; installed: boolean };
+export type NoteDraft = { doc: string; markdown: string; lines: { id: string; text: string }[] };
 type LiveText = LiveTurn & { recordingId: string };
 type LiveLanguage = { recordingId: string; speaker: string; language: string | null };
 type SpeakerProgress = { recordingId: string; working: boolean };
@@ -59,6 +60,7 @@ class Recorder {
   writingSummary = $state<string[]>([]);
   summaryWritten = $state<Record<string, number>>({});
   summaryErrors = $state<Record<string, string | null>>({});
+  draftNote = $state<NoteDraft | null>(null);
 
   #poll?: ReturnType<typeof setInterval>;
   #continuedFrom = 0;
@@ -89,7 +91,10 @@ class Recorder {
       const others = this.writingSummary.filter((id) => id !== recordingId);
       this.writingSummary = working ? [...others, recordingId] : others;
       this.summaryErrors = { ...this.summaryErrors, [recordingId]: error };
-      if (!working) this.summaryWritten = { ...this.summaryWritten, [recordingId]: Date.now() };
+      if (!working) {
+        this.summaryWritten = { ...this.summaryWritten, [recordingId]: Date.now() };
+        void this.refresh();
+      }
     });
     this.#loadLanguages();
     await this.refresh();
@@ -146,6 +151,17 @@ class Recorder {
         language: this.language || null,
         resume: continuing?.id ?? null,
       });
+      const status = await invoke<Status | null>("recording_status");
+      if (status && !continuing && this.draftNote) {
+        const saved = await invoke("save_note", { recordingId: status.id, ...this.draftNote })
+          .then(() => true)
+          .catch((error) => {
+            console.error(error);
+            return false;
+          });
+        if (saved) this.draftNote = null;
+      }
+      this.status = status;
       this.heardSound = false;
       this.live = earlier;
       this.detected = {};

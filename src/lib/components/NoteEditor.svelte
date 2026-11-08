@@ -6,12 +6,21 @@
   import StarterKit from "@tiptap/starter-kit";
   import UniqueID from "@tiptap/extension-unique-id";
   import { Placeholder } from "@tiptap/extensions";
+  import type { NoteDraft } from "$lib/recorder.svelte";
 
   const SAVE_AFTER_MS = 500;
   const LINE_TYPES = ["heading", "paragraph", "codeBlock"];
   const CONTAINER_MARKERS: Record<string, string> = { bulletList: "- ", orderedList: "1. ", blockquote: "> " };
 
-  let { recordingId }: { recordingId: string } = $props();
+  let {
+    recordingId,
+    draft,
+    onChange,
+  }: {
+    recordingId?: string;
+    draft?: NoteDraft;
+    onChange?: (draft: NoteDraft) => void;
+  } = $props();
 
   let element = $state<HTMLElement>();
   let editor: Editor | undefined;
@@ -41,21 +50,26 @@
     return found;
   }
 
+  function content(): NoteDraft {
+    const found = lines(editor!.state.doc);
+    return {
+      doc: JSON.stringify(editor!.getJSON()),
+      markdown: found.map((line) => line.text).join("\n"),
+      lines: found,
+    };
+  }
+
   function save() {
     clearTimeout(timer);
     if (!editor || !dirty) return;
     dirty = false;
-    const found = lines(editor.state.doc);
-    invoke("save_note", {
-      recordingId,
-      doc: JSON.stringify(editor.getJSON()),
-      markdown: found.map((line) => line.text).join("\n"),
-      lines: found,
-    }).catch(console.error);
+    const note = content();
+    if (recordingId) invoke("save_note", { recordingId, ...note }).catch(console.error);
+    else onChange?.(note);
   }
 
   onMount(async () => {
-    const saved = await invoke<string | null>("note", { recordingId });
+    const saved = recordingId ? await invoke<string | null>("note", { recordingId }) : draft?.doc;
     if (destroyed) return;
     editor = new Editor({
       element,
@@ -75,7 +89,8 @@
       onUpdate: () => {
         dirty = true;
         clearTimeout(timer);
-        timer = setTimeout(save, SAVE_AFTER_MS);
+        if (recordingId) timer = setTimeout(save, SAVE_AFTER_MS);
+        else onChange?.(content());
       },
       onBlur: save,
     });

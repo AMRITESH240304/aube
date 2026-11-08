@@ -7,8 +7,14 @@
   let {
     continuing,
     onStarted,
+    onNew,
     onSaved,
-  }: { continuing?: Recording; onStarted: () => void; onSaved: (id: string) => void } = $props();
+  }: {
+    continuing?: Recording;
+    onStarted: () => void;
+    onNew: () => void;
+    onSaved: (id: string) => void;
+  } = $props();
 
   const status = $derived(recorder.status);
   const SHAPE = [0.4, 0.75, 1, 0.6, 0.9, 0.55, 0.3];
@@ -89,7 +95,7 @@
         {recorder.installing ? "Downloading…" : continuing ? "Continue" : "Record"}
       </Button>
       {#if continuing}
-        <Button disabled={recorder.installing} onclick={() => start()}>
+        <Button disabled={recorder.installing} onclick={onNew}>
           <Plus class="size-4" aria-hidden="true" />New
         </Button>
       {/if}

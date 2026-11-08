@@ -1,5 +1,5 @@
 <script module lang="ts">
-  export type View = { kind: "home" } | { kind: "all" } | { kind: "settings" };
+  export type View = { kind: "home" } | { kind: "all" } | { kind: "settings" } | { kind: "new" };
 </script>
 
 <script lang="ts">
