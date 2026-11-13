@@ -169,7 +169,7 @@
         {@const selected = mics.chosen === option.id}
         <label
           class={[
-            "flex cursor-pointer items-center gap-3 rounded-md px-3 py-2 text-sm focus-within:outline-2 focus-within:outline-blue-600",
+            "relative flex cursor-pointer items-center gap-3 rounded-md px-3 py-2 text-sm focus-within:outline-2 focus-within:outline-blue-600",
             selected ? "bg-zinc-200 font-medium dark:bg-zinc-800" : "hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
           ]}
         >
@@ -215,7 +215,7 @@
         {@const selected = llm.provider === option.value}
         <label
           class={[
-            "flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2 text-sm focus-within:outline-2 focus-within:outline-blue-600",
+            "relative flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2 text-sm focus-within:outline-2 focus-within:outline-blue-600",
             selected
               ? "border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900"
               : "border-zinc-300 hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800",
@@ -313,7 +313,7 @@
         {@const selected = option.key === dictation.settings.key}
         <label
           class={[
-            "flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm focus-within:outline-2 focus-within:outline-blue-600",
+            "relative flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm focus-within:outline-2 focus-within:outline-blue-600",
             selected
               ? "border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900"
               : "border-zinc-300 hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800",
