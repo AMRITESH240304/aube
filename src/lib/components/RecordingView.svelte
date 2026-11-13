@@ -2,7 +2,7 @@
   import { onMount, tick } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { ArrowLeft, Check, Copy, Download, NotebookPen, PencilLine, Sparkles, Trash2 } from "@lucide/svelte";
-  import { formatDuration, recorder, type Recording } from "$lib/recorder.svelte";
+  import { formatDuration, formatStartedAt, recorder, type Recording } from "$lib/recorder.svelte";
   import { toMarkdown } from "$lib/markdown";
   import type { Summary } from "$lib/summary";
   import type { Transcript } from "$lib/transcript";
@@ -146,10 +146,10 @@
               <Button primary disabled={busy} onclick={rename}>Save</Button>
             </form>
           {:else}
-            <h1 class="truncate text-xl font-semibold">{recording.title}</h1>
+            <h1 class="truncate text-xl font-semibold" title={recording.title}>{recording.title}</h1>
           {/if}
           <p class="text-sm text-zinc-500 tabular-nums">
-            {new Date(recording.startedAt).toLocaleString()} · {formatDuration(recording.durationSecs)}
+            {formatStartedAt(recording.startedAt)} · {formatDuration(recording.durationSecs)}
           </p>
         </div>
         {#if !renaming && !confirmDelete}
@@ -172,7 +172,7 @@
           <Button onclick={() => ((title = recording.title), (renaming = true))} aria-label="Rename" title="Rename">
             <PencilLine class="size-4" aria-hidden="true" />
           </Button>
-          <Button danger onclick={() => (confirmDelete = true)} aria-label="Delete…" title="Delete">
+          <Button onclick={() => (confirmDelete = true)} aria-label="Delete…" title="Delete">
             <Trash2 class="size-4" aria-hidden="true" />
           </Button>
         {/if}

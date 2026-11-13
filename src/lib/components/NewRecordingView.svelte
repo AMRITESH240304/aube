@@ -8,7 +8,7 @@
 </script>
 
 <div>
-  <h1 class="text-xl font-semibold">New recording</h1>
-  <p class="mb-6 text-sm text-zinc-500">Write your notes now, then press Record when you're ready.</p>
+  <h1 class="text-xl font-semibold">New note</h1>
+  <p class="mb-6 text-sm text-zinc-400">Write an agenda or questions now. Press Record when the meeting starts and they're kept with it.</p>
   <NoteEditor draft={recorder.draftNote ?? undefined} onChange={remember} />
 </div>

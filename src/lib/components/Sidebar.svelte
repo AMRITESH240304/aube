@@ -115,7 +115,7 @@
 
   {#if live || past.length}
     <section class="-mx-1 flex min-h-0 flex-1 flex-col" aria-labelledby="sidebar-recordings">
-      <p id="sidebar-recordings" class="mb-1.5 px-3 text-[11px] tracking-[0.08em] text-zinc-500 uppercase">Recordings</p>
+      <p id="sidebar-recordings" class="mb-1.5 px-3 text-xs font-medium text-zinc-500">Recordings</p>
       <ul class="min-h-0 space-y-0.5 overflow-y-auto px-1">
         {#if live}
           {@render recordingItem(live.title, watchingLive, () => onNavigate({ kind: "home" }), "Now", true)}

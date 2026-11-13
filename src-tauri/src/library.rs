@@ -615,6 +615,14 @@ pub fn list_recordings(db: State<'_, Db>) -> Result<Vec<Recording>> {
 }
 
 #[tauri::command]
+pub fn create_note(db: State<'_, Db>, title: String) -> Result<String> {
+    let started_at = now();
+    let id = started_at.to_string();
+    db.create_recording(&id, &title, started_at)?;
+    Ok(id)
+}
+
+#[tauri::command]
 pub fn rename_recording(db: State<'_, Db>, id: String, title: String) -> Result<()> {
     let title = title.trim();
     if title.is_empty() {

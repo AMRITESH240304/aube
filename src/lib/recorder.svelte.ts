@@ -60,7 +60,8 @@ class Recorder {
   writingSummary = $state<string[]>([]);
   summaryWritten = $state<Record<string, number>>({});
   summaryErrors = $state<Record<string, string | null>>({});
-  draftNote = $state<NoteDraft | null>(null);
+  #draft = $state<NoteDraft | null>(readDraft());
+  savingDraft = $state(false);
 
   #poll?: ReturnType<typeof setInterval>;
   #continuedFrom = 0;
@@ -102,6 +103,38 @@ class Recorder {
     if (this.status) this.#startPolling();
   }
 
+  get draftNote() {
+    return this.#draft;
+  }
+
+  set draftNote(draft: NoteDraft | null) {
+    this.#draft = draft;
+    try {
+      if (draft) localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+      else localStorage.removeItem(DRAFT_KEY);
+    } catch {}
+  }
+
+  async saveDraft() {
+    const draft = this.draftNote;
+    if (!draft?.markdown.trim() || this.savingDraft) return null;
+    this.savingDraft = true;
+    this.error = "";
+    try {
+      const firstLine = draft.markdown.split("\n")[0].replace(/^(#+|-|>|1\.)\s+/, "").trim().slice(0, 80);
+      const id = await invoke<string>("create_note", { title: firstLine || defaultTitle("Note") });
+      await invoke("save_note", { recordingId: id, ...draft });
+      this.draftNote = null;
+      await this.refresh();
+      return id;
+    } catch (e) {
+      this.error = `Couldn't save the note: ${e}`;
+      return null;
+    } finally {
+      this.savingDraft = false;
+    }
+  }
+
   async refresh() {
     this.recordings = await invoke<Recording[]>("list_recordings");
     this.loaded = true;
@@ -132,7 +165,7 @@ class Recorder {
       await invoke("install_language", { id });
       await this.#loadLanguages();
     } catch (e) {
-      this.error = String(e);
+      this.error = `Couldn't record: ${e}`;
     }
     this.installing = false;
   }
@@ -147,7 +180,7 @@ class Recorder {
     const earlier = continuing ? await this.#savedTurns(continuing.id) : [];
     try {
       await invoke("start_recording", {
-        title: defaultTitle(),
+        title: defaultTitle("Recording"),
         language: this.language || null,
         resume: continuing?.id ?? null,
       });
@@ -169,7 +202,7 @@ class Recorder {
       this.#startPolling();
       return true;
     } catch (e) {
-      this.error = String(e);
+      this.error = `Couldn't record: ${e}`;
       return false;
     }
   }
@@ -183,7 +216,7 @@ class Recorder {
     clearInterval(this.#poll);
     this.saving = true;
     const id = await invoke<string>("stop_recording").catch((e) => {
-      this.error = String(e);
+      this.error = `Couldn't record: ${e}`;
       return null;
     });
     this.status = null;
@@ -204,8 +237,21 @@ class Recorder {
 
 export const recorder = new Recorder();
 
-const defaultTitle = () =>
-  `Recording, ${new Date().toLocaleString(undefined, { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}`;
+const DRAFT_KEY = "draft-note";
+
+function readDraft(): NoteDraft | null {
+  try {
+    return JSON.parse(localStorage.getItem(DRAFT_KEY) ?? "null");
+  } catch {
+    return null;
+  }
+}
+
+const defaultTitle = (kind: string) =>
+  `${kind}, ${new Date().toLocaleString(undefined, { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}`;
+
+export const formatStartedAt = (ms: number) =>
+  new Date(ms).toLocaleString(undefined, { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
 
 export function formatDuration(totalSecs: number) {
   const secs = Math.floor(totalSecs);

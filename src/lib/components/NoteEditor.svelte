@@ -87,10 +87,10 @@
         },
       },
       onUpdate: () => {
+        if (!recordingId) return onChange?.(content());
         dirty = true;
         clearTimeout(timer);
-        if (recordingId) timer = setTimeout(save, SAVE_AFTER_MS);
-        else onChange?.(content());
+        timer = setTimeout(save, SAVE_AFTER_MS);
       },
       onBlur: save,
     });
