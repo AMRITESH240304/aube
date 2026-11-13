@@ -8,7 +8,7 @@
   --color-zinc-200: #d4c9e6;
   --color-zinc-300: #b4a7cc;
   --color-zinc-400: #9282ae;
-  --color-zinc-500: #73638e;
+  --color-zinc-500: #8676a1;
   --color-zinc-600: #574a6f;
   --color-zinc-700: #3c3253;
   --color-zinc-800: #271f38;
@@ -45,7 +45,7 @@
   --color-zinc-200: #d4d4da;
   --color-zinc-300: #b1b1b9;
   --color-zinc-400: #8b8b95;
-  --color-zinc-500: #6c6c76;
+  --color-zinc-500: #7c7c86;
   --color-zinc-600: #4b4b53;
   --color-zinc-700: #2c2c32;
   --color-zinc-800: #1c1c21;
@@ -70,7 +70,7 @@
   --wave-them: #b9a6ff;
   --display-font: var(--font-sans);
   --display-weight: 400;
-  --display-tracking: -0.035em;
+  --display-tracking: -0.02em;
   --backdrop:
     linear-gradient(to right, rgb(255 255 255 / 0.035) 1px, transparent 1px) 0 0 / 72px 72px,
     linear-gradient(to bottom, rgb(255 255 255 / 0.035) 1px, transparent 1px) 0 0 / 72px 72px, var(--color-zinc-950);
@@ -82,7 +82,7 @@
   --color-zinc-200: #e0dccd;
   --color-zinc-300: #c4bfae;
   --color-zinc-400: #a09b8b;
-  --color-zinc-500: #7d7869;
+  --color-zinc-500: #868172;
   --color-zinc-600: #5b574c;
   --color-zinc-700: #3b3932;
   --color-zinc-800: #282722;
@@ -99,7 +99,7 @@
   --wave-them: #eef56b;
   --display-font: var(--font-sans);
   --display-weight: 800;
-  --display-tracking: -0.045em;
+  --display-tracking: -0.025em;
   --backdrop: var(--color-zinc-950);
 }
 
@@ -147,6 +147,7 @@ h2 {
   font-family: var(--display-font);
   font-weight: var(--display-weight);
   letter-spacing: var(--display-tracking);
+  text-wrap: balance;
 }
 
 :root[data-theme="terminal"] .text-xs {
@@ -163,6 +164,15 @@ h2 {
 
   ::selection {
     background: rgb(var(--glow) / 0.35);
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-zinc-700) transparent;
+  }
+
+  .ProseMirror {
+    caret-color: var(--color-blue-600);
   }
 }
 

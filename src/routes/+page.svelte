@@ -27,7 +27,6 @@
   }
 
   function newRecording() {
-    recorder.draftNote = null;
     navigate({ kind: "new" });
   }
 
@@ -70,6 +69,7 @@
     </main>
     <RecordBar
       continuing={open}
+      drafting={view.kind === "new" && !query.trim()}
       onStarted={() => navigate({ kind: "home" })}
       onNew={newRecording}
       onSaved={openRecording}

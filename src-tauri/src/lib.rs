@@ -40,6 +40,7 @@ pub fn run() {
             recorder::microphones,
             recorder::set_microphone,
             library::list_recordings,
+            library::create_note,
             library::rename_recording,
             library::delete_recording,
             library::transcript,

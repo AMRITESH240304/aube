@@ -1,16 +1,18 @@
 <script lang="ts">
-  import { Pause, Play, Plus, Square } from "@lucide/svelte";
+  import { Check, NotebookPen, Pause, Play, Plus, Square } from "@lucide/svelte";
   import { formatDuration, recorder, type Recording } from "$lib/recorder.svelte";
   import Button from "./Button.svelte";
   import LanguagePicker from "./LanguagePicker.svelte";
 
   let {
     continuing,
+    drafting = false,
     onStarted,
     onNew,
     onSaved,
   }: {
     continuing?: Recording;
+    drafting?: boolean;
     onStarted: () => void;
     onNew: () => void;
     onSaved: (id: string) => void;
@@ -21,6 +23,11 @@
 
   async function stop() {
     const id = await recorder.stop();
+    if (id) onSaved(id);
+  }
+
+  async function saveNote() {
+    const id = await recorder.saveDraft();
     if (id) onSaved(id);
   }
 
@@ -79,7 +86,7 @@
         class="pointer-events-auto flex items-center gap-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 shadow-sm dark:border-red-900 dark:bg-red-950 dark:text-red-200"
         role="alert"
       >
-        Couldn't record: {recorder.error}
+        {recorder.error}
         <Button onclick={() => (recorder.error = "")}>Dismiss</Button>
       </p>
     {/if}
@@ -97,6 +104,14 @@
       {#if continuing}
         <Button disabled={recorder.installing} onclick={onNew}>
           <Plus class="size-4" aria-hidden="true" />New
+        </Button>
+      {:else if drafting}
+        <Button disabled={!recorder.draftNote?.markdown.trim() || recorder.savingDraft} onclick={saveNote}>
+          <Check class="size-4" aria-hidden="true" />{recorder.savingDraft ? "Saving…" : "Save"}
+        </Button>
+      {:else}
+        <Button disabled={recorder.installing} onclick={onNew}>
+          <NotebookPen class="size-4" aria-hidden="true" />Note
         </Button>
       {/if}
     </div>

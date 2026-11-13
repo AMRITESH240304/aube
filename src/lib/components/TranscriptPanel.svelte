@@ -93,7 +93,7 @@
   {/if}
   <div class="flex items-center gap-3 px-6 py-2">
     <button
-      class="flex items-center gap-1.5 rounded text-xs font-medium tracking-wide text-zinc-500 uppercase hover:text-zinc-900 focus-visible:outline-2 focus-visible:outline-blue-600 dark:hover:text-zinc-100"
+      class="flex items-center gap-1.5 rounded text-xs font-medium text-zinc-500 hover:text-zinc-900 focus-visible:outline-2 focus-visible:outline-blue-600 dark:hover:text-zinc-100"
       aria-expanded={open}
       onclick={() => (open = !open)}
     >
